@@ -1,0 +1,1 @@
+../../ai-skills/pr-describer/COMMAND.md
