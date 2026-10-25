@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.0 (2026-10-25)
+
+### Pull Requests
+[#8](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/8) | feat: budgets and budget history — CRUD, transactional create/delete, owner checks
+
+
 ## v0.7.0 (2026-10-25)
 
 ### Pull Requests
