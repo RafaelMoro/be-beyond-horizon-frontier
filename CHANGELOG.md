@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0 (2026-10-25)
+
+### Pull Requests
+[#5](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/5) | feat: mail — Resend forgot-password email with react-email template
+
+
 ## v0.4.0 (2026-10-25)
 
 ### Pull Requests
