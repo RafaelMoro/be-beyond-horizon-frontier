@@ -63,6 +63,55 @@ describe('envSchema', () => {
   );
 });
 
+describe('envSchema mail keys', () => {
+  const mail = {
+    RESEND_API_KEY: 're_test_fake',
+    MAILER_MAIL: 'no-reply@example.com',
+  };
+
+  it('accepts no mail keys in development', () => {
+    expect(validate({ ...base, ...parts }).error).toBeUndefined();
+  });
+
+  it('accepts blank mail keys in development', () => {
+    expect(
+      validate({ ...base, ...parts, RESEND_API_KEY: '', MAILER_MAIL: '' })
+        .error,
+    ).toBeUndefined();
+  });
+
+  it('accepts both mail keys in production', () => {
+    expect(
+      validate({ ...base, ...parts, ...mail, NODE_ENV: 'production' }).error,
+    ).toBeUndefined();
+  });
+
+  it.each(['RESEND_API_KEY', 'MAILER_MAIL'] as const)(
+    'fails in production without %s, or with it blank',
+    (key) => {
+      const { [key]: _, ...rest } = mail;
+      const env = { ...base, ...parts, ...rest, NODE_ENV: 'production' };
+      expect(validate(env).error?.message).toMatch(
+        new RegExp(`"${key}" is required`),
+      );
+      expect(validate({ ...env, [key]: '' }).error?.message).toMatch(
+        new RegExp(`"${key}"`),
+      );
+    },
+  );
+
+  it('accepts MAILER_MAIL as `Name <addr>`', () => {
+    expect(
+      validate({
+        ...base,
+        ...parts,
+        ...mail,
+        MAILER_MAIL: 'Budget Master <no-reply@example.com>',
+      }).error,
+    ).toBeUndefined();
+  });
+});
+
 describe('buildMongoUri', () => {
   it('returns MONGO_URI unchanged when set, ignoring the parts', () => {
     expect(buildMongoUri({ ...parts, MONGO_URI: 'mongodb://h:1/x' })).toBe(

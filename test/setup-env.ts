@@ -12,3 +12,6 @@ process.env.NODE_ENV = 'test';
 // Low-entropy and different from each other, so the two JwtModules can't verify each other's tokens.
 process.env.JWT_KEY = 'e2e-jwt-key';
 process.env.ONE_TIME_JWT_KEY = 'e2e-one-time-key';
+// Blank, so a developer's .env Resend key never gives the e2e run a live mail client.
+process.env.RESEND_API_KEY = '';
+process.env.MAILER_MAIL = '';
