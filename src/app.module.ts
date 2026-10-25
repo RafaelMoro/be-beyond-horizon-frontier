@@ -11,6 +11,7 @@ import { MailModule } from './mail/mail.module.js';
 import { CategoryModule } from './category/category.module.js';
 import { AccountModule } from './account/account.module.js';
 import { BudgetModule } from './budget/budget.module.js';
+import { RecordModule } from './record/record.module.js';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { BudgetModule } from './budget/budget.module.js';
     CategoryModule,
     AccountModule,
     BudgetModule,
+    RecordModule,
   ],
   controllers: [AppController],
   providers: [AppService],
