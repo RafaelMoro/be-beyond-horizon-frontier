@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.0 (2026-10-25)
+
+### Pull Requests
+[#6](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/6) | feat: categories — CRUD with owner checks, transactional default seeding
+
+
 ## v0.5.0 (2026-10-25)
 
 ### Pull Requests
