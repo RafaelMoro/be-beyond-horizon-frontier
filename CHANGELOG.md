@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.0 (2026-10-25)
+
+### Pull Requests
+[#7](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/7) | feat: accounts — /account-actions CRUD, owner-bound balance helpers, transactional delete
+
+
 ## v0.6.0 (2026-10-25)
 
 ### Pull Requests
