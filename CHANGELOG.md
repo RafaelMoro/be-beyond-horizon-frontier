@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.0 (2026-10-25)
+
+### Pull Requests
+[#3](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/3) | feat: foundation — config, mongo, response envelope, error filters, e2e harness
+
+
 ## v0.2.0 (2026-10-25)
 
 ### Pull Requests
