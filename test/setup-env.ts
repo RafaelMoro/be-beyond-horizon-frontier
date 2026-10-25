@@ -9,3 +9,6 @@ process.env.FRONTEND_URI = 'http://localhost:4100';
 process.env.TEST_FRONTEND_URI = 'http://localhost:4101';
 process.env.DOMAIN_URI = 'http://localhost:4102';
 process.env.NODE_ENV = 'test';
+// Low-entropy and different from each other, so the two JwtModules can't verify each other's tokens.
+process.env.JWT_KEY = 'e2e-jwt-key';
+process.env.ONE_TIME_JWT_KEY = 'e2e-one-time-key';

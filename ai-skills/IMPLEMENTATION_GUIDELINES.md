@@ -48,7 +48,13 @@ pnpm nest g s <module-name>/services/<name>      # src/<module-name>/services/<n
 pnpm nest g co <module-name>/controllers/<name>  # src/<module-name>/controllers/<name>.controller.ts + .spec.ts
 ```
 
-Both are registered in the nearest module's `providers` / `controllers` automatically.
+Both are registered in the nearest module's `providers` / `controllers` automatically. Pass **`--flat`** (otherwise the CLI adds an extra `<name>/` folder, e.g. `services/user/user.service.ts`), and generate the module first so the CLI registers into it, not `AppModule`:
+
+```bash
+pnpm nest g s user/services/user --flat
+pnpm nest g co user/controllers/user --flat --no-spec
+pnpm nest g gu auth/guards/jwt-auth --flat
+```
 
 **Controllers must stay thin:** no business logic, no orchestration across services, no conditionals beyond pulling the authenticated user off the request. Pass inputs through and let the service own every decision.
 
@@ -250,9 +256,12 @@ The global `ValidationPipe` runs with `whitelist`, `forbidNonWhitelisted` and `t
 
 ---
 
-## Auth _(adopt when needed)_
+## Auth
 
-When it lands, document the guard, the public-route decorator, and guard ordering (authentication guard always before authorization) here and in `REPO_CONTEXT.md`.
+- Every route is protected by the global `JwtAuthGuard` (`src/auth/guards/jwt-auth.guard.ts`, `APP_GUARD` in `AuthModule`). Mark open routes with `@Public()` from `src/auth/decorators/public.decorator.ts` (handler or class). Test-only e2e controllers need it too.
+- Protected handlers type the request as `AuthenticatedRequest` (`src/auth/auth.interface.ts`) and pass `req.user.sub` to the service; the controller does nothing else with it.
+- Guard ordering: authentication (`JwtAuthGuard`) always before any authorization guard.
+- Don't make a `JwtModule` global: `AuthModule` and `UserModule` each own one with a different key.
 
 ---
 

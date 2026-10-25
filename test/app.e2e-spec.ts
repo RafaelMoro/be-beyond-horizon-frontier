@@ -11,6 +11,7 @@ import { IsString } from 'class-validator';
 import type { Request } from 'express';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { Public } from '../src/auth/decorators/public.decorator.js';
 import { INITIAL_RESPONSE } from '../src/constants.js';
 import { closeTestApp, createTestApp } from './create-test-app.js';
 
@@ -20,6 +21,7 @@ class ProbeDto {
   name: string;
 }
 
+@Public()
 @Controller()
 class ProbeController {
   @Post('probe')
