@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend) and S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -68,6 +68,14 @@ src/
 │   ├── dtos/category.dto.ts
 │   ├── services/category.service.ts (+ .spec)  # CRUD by owner, createLocalCategories (transaction), assertCategoryOwned (S7)
 │   └── controllers/category.controller.ts      # /categories routes
+├── account/
+│   ├── account.module.ts   # forFeature(Account); ACCOUNT_RECORDS_CASCADE default (0/0 useValue); exports AccountService
+│   ├── account.constants.ts # legacy texts, CARD_PROVIDERS, TERMINATION_DIGITS_REGEX, ACCOUNT_RECORDS_CASCADE token
+│   ├── account.interface.ts # AccountRecordsCascade (records-cascade port, implemented by S7)
+│   ├── entities/account.entity.ts    # collection `accounts`, `sub` is a string, index { sub: 1 }; alias/card fields optional (D17)
+│   ├── dtos/account.dto.ts
+│   ├── services/account.service.ts (+ .spec)  # CRUD by owner, card checks, delete in a transaction, assertAccountOwned + incrementBalance (S7)
+│   └── controllers/account.controller.ts      # /account-actions routes
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -76,7 +84,8 @@ test/
 ├── create-test-app.ts      # createTestApp / closeTestApp
 ├── app.e2e-spec.ts
 ├── auth-users.e2e-spec.ts
-└── categories.e2e-spec.ts
+├── categories.e2e-spec.ts
+└── accounts.e2e-spec.ts
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -84,7 +93,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: the other budget feature modules (accounts, records…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: the other budget feature modules (records, budgets…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
@@ -146,6 +155,10 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | `CategoryController` | `PUT /categories`                      | JWT    | Body `{categoryId, categoryName?, subCategories?, icon?}`; 200 `data.category`; not owned/missing → 400 `'Category not found'` |
 | `CategoryController` | `DELETE /categories`                   | JWT    | Body `{categoryId}`; 200 `'Category deleted'` `data.category`; not owned/missing → 400 `'Category not found'`. Records are left as they are |
 | `CategoryController` | `POST /categories/create-local-categories` | public | Body `{sub}`; seeds the 12 defaults in a transaction for an existing user with no categories, stored `sub` = the user's id; 201 `'New category created'` `data.categories`. Unknown user or already has categories → 400 `'Local categories already exists'` |
+| `AccountController` | `GET /account-actions`                 | JWT    | 200 `data.accounts` (the user's full docs incl. `sub`, `__v`; `message: null`) |
+| `AccountController` | `POST /account-actions`                | JWT    | Body `{title, alias, accountType, amount, backgroundColor, color, accountProvider?, terminationFourDigits?}`; 201 `'Account created'` `data.account`. Bad digits → 400 `'Termination digits must be a 4-digit number (digits only).'` (checked first), bad provider → 400 `'Invalid account provider'` |
+| `AccountController` | `PUT /account-actions`                 | JWT    | Body `{accountId, …any create field}`; 200 `'Account Updated'` `data.account`. Missing → 400 `'Account not found'`, foreign → **400** `'Account does not belong to the user'` (both before the card checks) |
+| `AccountController` | `DELETE /account-actions`              | JWT    | Body `{accountId}`; 200 `'Account Deleted'` `data { accountDeleted, numberExpensesDeleted, numberIncomesDeleted }`. Missing → 400 `'Account not found'`, foreign → **401** `'Account does not belong to the user'`. Runs in a transaction; records cascade via the `ACCOUNT_RECORDS_CASCADE` port (default 0/0 until S7 provides it) |
 
 ## Auth
 

@@ -9,6 +9,7 @@ import { UserModule } from './user/user.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { CategoryModule } from './category/category.module.js';
+import { AccountModule } from './account/account.module.js';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { CategoryModule } from './category/category.module.js';
     AuthModule,
     MailModule,
     CategoryModule,
+    AccountModule,
   ],
   controllers: [AppController],
   providers: [AppService],
