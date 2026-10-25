@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Lint, build, test
+    name: Lint, build, test, e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +34,28 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run build
       - run: pnpm test
+
+      # services: can't pass --replSet, so start a 1-node replica set by hand (transactions need one).
+      # Member host localhost:27017 resolves to the same mongod on the runner (port mapped): no directConnection needed.
+      - name: Start MongoDB replica set
+        run: |
+          docker run -d --name mongo -p 27017:27017 mongo:8 --replSet rs0 --bind_ip_all
+          timeout 60 bash -c 'until docker exec mongo mongosh --quiet --eval "db.runCommand({ping:1})" >/dev/null 2>&1; do sleep 1; done'
+          docker exec mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          timeout 60 bash -c 'until [ "$(docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary")" = "true" ]; do sleep 1; done'
+
+      - run: pnpm run test:e2e
+        env:
+          MONGO_TEST_URI: mongodb://localhost:27017/?replicaSet=rs0
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history
+
+      # Container CLI, not gitleaks-action: the action scans only the PR's commits and needs a license for org repos.
+      # --redact keeps any finding's value out of the public log. Known false positives live in .gitleaksignore.
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --exit-code 1

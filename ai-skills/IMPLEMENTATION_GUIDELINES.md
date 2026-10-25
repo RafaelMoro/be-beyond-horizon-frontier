@@ -168,6 +168,10 @@ const module: TestingModule = await Test.createTestingModule({
 }).compile();
 ```
 
+### E2E tests
+
+Build the app with `createTestApp()` and close it with `closeTestApp(app)` (`test/create-test-app.ts`); never `Test.createTestingModule(...).createNestApplication()` by hand, or the pipe, filters, CORS and cookie-parser are missing. Test-only controllers go in `createTestApp({ controllers: [...] })`, declared inside the spec. E2E never uses `.env`: `test/setup-env.ts` points it at `MONGO_TEST_URI` or an in-memory replica set and the `budget-master-e2e` DB, which `closeTestApp` drops.
+
 ### Console output
 
 Silence logs unless the test asserts on them:
@@ -206,36 +210,49 @@ Same pattern for entities: `export type AccountDoc = Account;`
 
 ---
 
-## Error Handling — Never Return a Raw 500
+## Error Handling
 
-Every async service method (database, external API) wraps its logic in try/catch and throws a typed HTTP exception. Unhandled errors surface as a bare 500 that leaks internals and tells the client nothing actionable.
+The global filters (`src/exceptions/`, registered in `src/configure-app.ts`) already turn every error into an enveloped response (see `REPO_CONTEXT.md` → Error filters):
 
-Use Nest's built-in exceptions until a domain error type earns its place:
+- `HttpException`s keep their status and body (`GeneralAppExceptionFilter`).
+- Generic library errors are mapped **once** in `CatchAllExceptionFilter`: CastError / BSONError / mongoose ValidationError → 400, E11000 → 409, exposed body-parser `http-errors` (413 …) keep their status. Anything else becomes a generic enveloped 500 and is logged.
 
-```typescript
-async findAccount(id: string): Promise<AccountDataDto> {
-  try {
-    const account = await this.repo.findById(id);
-    if (!account) throw new NotFoundException(`Account ${id} not found`);
-    return account;
-  } catch (error) {
-    if (error instanceof HttpException) throw error; // already shaped — don't rewrap
-    throw new InternalServerErrorException('Failed to fetch account');
-  }
-}
-```
+So services don't need try/catch just to avoid a raw 500. Throw Nest exceptions for domain outcomes (`NotFoundException`, `UnauthorizedException`, …).
 
-Introduce a custom error class + global exception filter only when the client needs a shape Nest's defaults don't give — and on a ported route, the error shape is whatever the legacy route returns (see [Keep the Legacy HTTP Contract](#keep-the-legacy-http-contract)).
+**Never `throw new BadRequestException(e.message)`** (or any `HttpException` wrapping a caught error's message) around service code: library messages leak internals and user data (E11000 messages contain emails).
+
+Route-specific legacy texts and statuses are mapped **explicitly in that route's story**, by catching the specific error in the service. Examples: E11000 on signup → 400 `'Try with other email.'`; reset-password jsonwebtoken errors → 400 with `err.message`, as legacy `verifyToken` does.
+
+### Logging rule
+
+A log line carries the method, the **route pattern** (`req.route?.path`) and the status. It never includes `req.originalUrl`/`req.url` (reset-password URLs carry a live token), bodies, cookies, the `Authorization` header, `keyValue` or emails.
 
 ---
 
-## Persistence, Auth, and Config _(adopt when needed)_
+## Config
 
-When the first one lands, add its conventions here and to `REPO_CONTEXT.md` in the same PR:
+- Keys are validated by `envSchema` in `src/config.ts` and exposed through `registerAs('config', …)`. Add a new key to both, and to `.env.example`, with its legacy name.
+- Inject the typed object: `constructor(@Inject(config.KEY) private readonly c: ConfigType<typeof config>) {}`. Never read `process.env` in services.
+- `.env` points at the prod DB. Never point tests at it.
 
-- **Database** — pick the ORM/ODM, then document entity location (`entities/`), module registration, and injection pattern.
-- **Auth** — document the guard, the public-route decorator, and guard ordering (authentication guard always before authorization).
-- **Config** — introduce `ConfigModule` with a validation schema on the first required env var; read config through a typed object, never `process.env` scattered through services. (Today the only env read is `PORT` in `src/main.ts`.)
+## Database
+
+- The connection lives in `AppModule` (`MongooseModule.forRootAsync` + `mongooseOptions` in `src/mongoose-options.ts`). Feature modules register their schemas with `MongooseModule.forFeature`.
+- `autoIndex` is off outside tests (`start:dev` hits prod), so production indexes come from S8's script, not from schema `index`/`unique` at boot.
+
+## DTOs and the ValidationPipe
+
+The global `ValidationPipe` runs with `whitelist`, `forbidNonWhitelisted` and `transform: true`:
+
+- Unknown properties are rejected with 400 (`property X should not exist`).
+- With `transform: true`, property initializers become defaults, so don't add them unless the contract has that default.
+- Nested DTOs need `@ValidateNested()` + `@Type(() => Child)`.
+
+---
+
+## Auth _(adopt when needed)_
+
+When it lands, document the guard, the public-route decorator, and guard ordering (authentication guard always before authorization) here and in `REPO_CONTEXT.md`.
 
 ---
 
