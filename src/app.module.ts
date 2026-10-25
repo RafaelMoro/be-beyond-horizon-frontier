@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { CategoryModule } from './category/category.module.js';
 import { AccountModule } from './account/account.module.js';
+import { BudgetModule } from './budget/budget.module.js';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AccountModule } from './account/account.module.js';
     MailModule,
     CategoryModule,
     AccountModule,
+    BudgetModule,
   ],
   controllers: [AppController],
   providers: [AppService],

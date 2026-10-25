@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -76,6 +76,16 @@ src/
 │   ├── dtos/account.dto.ts
 │   ├── services/account.service.ts (+ .spec)  # CRUD by owner, card checks, delete in a transaction, assertAccountOwned + incrementBalance (S7)
 │   └── controllers/account.controller.ts      # /account-actions routes
+├── budget/
+│   ├── budget.module.ts    # forFeature(Budget, BudgetHistory); BUDGET_EXPENSES_UNLINK default (no-op); exports both services
+│   ├── budget.constants.ts # legacy texts, BUDGET_EXPENSES_UNLINK token
+│   ├── budget.interface.ts # BudgetExpensesUnlink (linkedBudgets pull on budget delete, implemented by S7)
+│   ├── entities/budget.entity.ts          # collection `budgetmodels`, `sub` string, index { sub: 1 }; toJSON maps legacy nestResetDate → nextResetDate (D8)
+│   ├── entities/budget-history.entity.ts  # collection `budgethistorymodels`, `budget` ObjectId ref, unique index { budget: 1, sub: 1 }
+│   ├── dtos/budget.dto.ts, dtos/budget-history.dto.ts
+│   ├── services/budget.service.ts (+ .spec)          # budget CRUD, create/delete transactions, incrementBudgetAmount (S7)
+│   ├── services/budget-history.service.ts (+ .spec)  # history CRUD, owner check on POST, addHistoryRecord / removeHistoryRecord (S7)
+│   └── controllers/budget.controller.ts, controllers/budget-history.controller.ts  # /budgets, /budget-history
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -85,7 +95,8 @@ test/
 ├── app.e2e-spec.ts
 ├── auth-users.e2e-spec.ts
 ├── categories.e2e-spec.ts
-└── accounts.e2e-spec.ts
+├── accounts.e2e-spec.ts
+└── budgets.e2e-spec.ts
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -93,7 +104,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: the other budget feature modules (records, budgets…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: the other budget feature modules (records…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
@@ -159,6 +170,20 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | `AccountController` | `POST /account-actions`                | JWT    | Body `{title, alias, accountType, amount, backgroundColor, color, accountProvider?, terminationFourDigits?}`; 201 `'Account created'` `data.account`. Bad digits → 400 `'Termination digits must be a 4-digit number (digits only).'` (checked first), bad provider → 400 `'Invalid account provider'` |
 | `AccountController` | `PUT /account-actions`                 | JWT    | Body `{accountId, …any create field}`; 200 `'Account Updated'` `data.account`. Missing → 400 `'Account not found'`, foreign → **400** `'Account does not belong to the user'` (both before the card checks) |
 | `AccountController` | `DELETE /account-actions`              | JWT    | Body `{accountId}`; 200 `'Account Deleted'` `data { accountDeleted, numberExpensesDeleted, numberIncomesDeleted }`. Missing → 400 `'Account not found'`, foreign → **401** `'Account does not belong to the user'`. Runs in a transaction; records cascade via the `ACCOUNT_RECORDS_CASCADE` port (default 0/0 until S7 provides it) |
+| `BudgetController` | `POST /budgets`                        | JWT    | Body: all 11 fields `{name, description, typeBudget, startDate, endDate, currentAmount, limit, period, isActive, nextResetDate, previousPeriods}`; 201 `'New budget created'` `data { budget, budgetHistory }` (both incl. `sub`; history `records: []`). One transaction |
+| `BudgetController` | `GET /budgets`                         | JWT    | 200 `data.budgets` (without `sub`). Empty → **200** `message: 'Budgets not found'`, `data: null` |
+| `BudgetController` | `GET /budgets/:budgetId`               | JWT    | 200 `data.budget` (incl. `sub`). Missing/foreign → **200** `'Budget not found'`, `data: null`; non-ObjectId → 400 `'Invalid _id'` |
+| `BudgetController` | `PUT /budgets`                         | JWT    | Body `{budgetId, …any create field}`; 200 **`'Budget history updated'`** (sic, develop) `data.budget`. Missing/foreign → 404 `'Budget not found'` |
+| `BudgetController` | `DELETE /budgets`                      | JWT    | Body `{budgetId}`; 200 `'Budget deleted'` `data { budget, budgetHistoryDeleted }`. Missing/foreign → 404 `'Budget not found'`. One transaction with the `BUDGET_EXPENSES_UNLINK` port (no-op until S7) and the history delete; a missing history still commits the budget delete, then 404 `'Budget history not found'` (E6.Q6) |
+| `BudgetHistoryController` | `POST /budget-history`          | JWT    | Body `{budget, records}`; 201 `'New budget history created'` `data.budgetHistory`. Missing/foreign/non-ObjectId budget → 404 `'Budget not found'` (no write); duplicate `{budget, sub}` → 409 `'Duplicate value'` (only where the unique index exists) |
+| `BudgetHistoryController` | `POST /budget-history/add-record` | JWT  | Body `{budgetId, record}`; 201 `'Record added to budget history'` `data.budgetHistory` (`$push`). No owned history → **400** `'Budget history not found'` |
+| `BudgetHistoryController` | `POST /budget-history/delete-record` | JWT | Body `{budgetId, record: <recordId, ObjectId>}`; 201 `'Record removed from budget history'` (`$pull`; unknown id → unchanged). No owned history → **400** `'Budget history not found'` |
+| `BudgetHistoryController` | `GET /budget-history`           | JWT    | 200 `data.budgetsHistory` (without `sub`, `budget` populated). Empty → **404** `'Budget history not found'` |
+| `BudgetHistoryController` | `GET /budget-history/:budgetHistoryId` | JWT | 200 `data.budgetHistory` (populated; D13). Missing/foreign → 404 `'Budget history not found'`; non-ObjectId → 400 `'Invalid _id'` |
+| `BudgetHistoryController` | `PUT /budget-history`           | JWT    | Body `{budgetHistoryId, records?, budget?}`; 200 `'Budget history updated'`; replaces `records`, ignores `budget`. Missing/foreign → 404 |
+| `BudgetHistoryController` | `DELETE /budget-history`        | JWT    | Body `{budgetHistoryId}`; 200 `'Budget history deleted'` `data.budgetHistory`. Missing/foreign → 404 |
+
+The unique `{ budget: 1, sub: 1 }` and `{ sub: 1 }` budget indexes build only under test (`autoIndex`); prod gets them from S8's script, so until then a duplicate history POST on prod creates a second doc.
 
 ## Auth
 
