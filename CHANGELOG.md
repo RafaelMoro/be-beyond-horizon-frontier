@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0 (2026-10-25)
+
+### Pull Requests
+[#2](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/2) | feat: add ai-skills, CLAUDE.md and agent tooling
+
+
 ## v0.1.0 (2026-10-25)
 
 ### Pull Requests
