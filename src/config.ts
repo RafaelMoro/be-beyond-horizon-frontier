@@ -16,6 +16,17 @@ const mongoPart = () =>
     otherwise: Joi.required(),
   });
 
+// Blank is allowed outside production (tests blank them; missing → forgot-password sends nothing).
+// MAILER_MAIL is not .email(): Resend accepts `Name <addr>`.
+const mailKey = () =>
+  Joi.string()
+    .allow('')
+    .when('NODE_ENV', {
+      is: 'production',
+      // oxlint-disable-next-line unicorn/no-thenable -- Joi's `when` API, not a promise-like object
+      then: Joi.string().invalid('').required(),
+    });
+
 // Only the keys the app consumes. @nestjs/config applies `allowUnknown`, so the legacy .env's other keys pass.
 // No length rule on the JWT keys: the owner's current keys must still boot.
 export const envSchema = Joi.object({
@@ -31,6 +42,8 @@ export const envSchema = Joi.object({
   NODE_ENV: Joi.string().required(),
   JWT_KEY: Joi.string().required(),
   ONE_TIME_JWT_KEY: Joi.string().required(),
+  RESEND_API_KEY: mailKey(),
+  MAILER_MAIL: mailKey(),
 });
 
 export function buildMongoUri(env: NodeJS.ProcessEnv): string {
@@ -51,4 +64,8 @@ export default registerAs('config', () => ({
   nodeEnv: process.env.NODE_ENV,
   jwtKey: process.env.JWT_KEY,
   jwtOneTimeKey: process.env.ONE_TIME_JWT_KEY,
+  mailer: {
+    email: process.env.MAILER_MAIL,
+    resendApiKey: process.env.RESEND_API_KEY,
+  },
 }));

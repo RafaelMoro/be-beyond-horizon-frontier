@@ -283,6 +283,27 @@ describe('UserService', () => {
         oneTimeToken: 'raw.one.time',
       });
     });
+
+    it('answers only after the send resolves', async () => {
+      model.findOne.mockReturnValue(exec(user));
+      model.updateOne.mockReturnValue(exec({ matchedCount: 1 }));
+      jwtService.signAsync.mockResolvedValue('raw.one.time');
+      let finishSend!: () => void;
+      mailer.sendForgotPasswordEmail.mockReturnValue(
+        new Promise<void>((r) => (finishSend = r)),
+      );
+      let settled = false;
+      const res = service.forgotPassword({ email: 'a@b.com' }).finally(() => {
+        settled = true;
+      });
+      await vi.waitFor(() =>
+        expect(mailer.sendForgotPasswordEmail).toHaveBeenCalled(),
+      );
+      await new Promise((r) => setImmediate(r));
+      expect(settled).toBe(false);
+      finishSend();
+      await expect(res).resolves.toStrictEqual(sent);
+    });
   });
 
   describe('resetPassword', () => {

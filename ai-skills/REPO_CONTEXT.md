@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, and S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password) and S3 mail (`mail` module: the forgot-password email via Resend).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -17,7 +17,8 @@ _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling c
 - NestJS 12 (`@nestjs/core` 12.2), Express platform (`@nestjs/platform-express`)
 - `@nestjs/config` 12 + Joi 18 (env validation), `@nestjs/mongoose` 12 + mongoose 9, class-validator / class-transformer, cookie-parser
 - `@nestjs/jwt` 12 (jsonwebtoken, HS256), `bcryptjs` 3 (cost 10). No passport.
-- TypeScript 6, ESM (`"type": "module"`, `module`/`moduleResolution: nodenext`, `strict: true`)
+- `resend` 6 (mail), `@react-email/components` 1 + `react` 19 (templates rendered to HTML), all exact-pinned (the template snapshot depends on the renderer)
+- TypeScript 6, ESM (`"type": "module"`, `module`/`moduleResolution: nodenext`, `strict: true`, `jsx: react-jsx` for the `.tsx` mail templates under `src/mail/templates`)
 - pnpm (`pnpm-lock.yaml`; CI pins pnpm 10, Node 22)
 - Vitest 4 (unit + e2e), supertest for e2e
 - oxlint (lint), Prettier (format)
@@ -47,14 +48,19 @@ src/
 │   ├── services/auth.service.ts (+ .spec)   # login
 │   └── controllers/auth.controller.ts       # POST /auth, sets the cookie
 ├── user/
-│   ├── user.module.ts      # forFeature(User), JwtModule (ONE_TIME_JWT_KEY, 1d), no-op FORGOT_PASSWORD_MAILER
+│   ├── user.module.ts      # forFeature(User), JwtModule (ONE_TIME_JWT_KEY, 1d); imports MailModule (FORGOT_PASSWORD_MAILER)
 │   ├── user.constants.ts   # legacy texts, BCRYPT_COST, FORGOT_PASSWORD_MAILER token
-│   ├── user.interface.ts   # ForgotPasswordMail / ForgotPasswordMailer (mail port, S3 implements it)
+│   ├── user.interface.ts   # ForgotPasswordMail / ForgotPasswordMailer (mail port, implemented by mail/)
 │   ├── user.utils.ts       # hashToken (sha256 hex)
 │   ├── entities/user.entity.ts       # collection `users`
 │   ├── dtos/user.dto.ts, user-responses.dto.ts
 │   ├── services/user.service.ts (+ .spec)
 │   └── controllers/user.controller.ts       # /users routes
+├── mail/
+│   ├── mail.module.ts      # MailService + FORGOT_PASSWORD_MAILER (useExisting: MailService), exports the token
+│   ├── mail.constants.ts   # FORGOT_PASSWORD_SUBJECT (legacy), MAIL_SEND_TIMEOUT_MS (5000)
+│   ├── services/mail.service.ts (+ .spec)   # Resend send; null client (warn, no send) when a mail key is blank
+│   └── templates/reset-password.tsx (+ .spec, __snapshots__)  # legacy ResetPassword port + renderResetPassword()
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -75,7 +81,7 @@ Does **not** exist yet — don't assume it: budget feature modules (accounts, re
 ## Config
 
 - `src/config.ts`. `ConfigModule.forRoot({ envFilePath: '.env', load: [config], isGlobal: true, validationSchema: envSchema })` in `AppModule`. Missing/invalid keys fail at startup with `Config validation error`.
-- Keys (legacy names): `MONGO_URI` **or** `MONGO_CONNECTION` + `MONGO_USER` + `MONGO_PWD` + `MONGO_HOST` (full host); `MONGO_DB_NAME`; `FRONTEND_URI`, `TEST_FRONTEND_URI`, `DOMAIN_URI`; `NODE_ENV`; `JWT_KEY` (access token, 5d), `ONE_TIME_JWT_KEY` (reset token, 1d); optional `PORT`. `PUBLIC_KEY` is no longer read. Unknown keys are allowed. Later stories add their keys to `envSchema`, the `registerAs` object and `.env.example`.
+- Keys (legacy names): `MONGO_URI` **or** `MONGO_CONNECTION` + `MONGO_USER` + `MONGO_PWD` + `MONGO_HOST` (full host); `MONGO_DB_NAME`; `FRONTEND_URI`, `TEST_FRONTEND_URI`, `DOMAIN_URI`; `NODE_ENV`; `JWT_KEY` (access token, 5d), `ONE_TIME_JWT_KEY` (reset token, 1d); `RESEND_API_KEY`, `MAILER_MAIL` (Resend sender, `Name <addr>` allowed): optional and blank-able unless `NODE_ENV=production`, where both are required and non-empty — if either is blank, forgot-password logs a fixed warn and sends nothing (tests blank both in `test/setup-env.ts`); optional `PORT`. `PUBLIC_KEY` is no longer read. Unknown keys are allowed. Later stories add their keys to `envSchema`, the `registerAs` object and `.env.example`.
 - Read config by injecting `@Inject(config.KEY) c: ConfigType<typeof config>` (or `app.get(config.KEY)`), never `process.env` in services.
 - The owner's `.env` points at the **prod** DB (local dev uses prod data). Tests never read it for Mongo.
 - CORS origins are the three `*_URI` keys: scheme required, no trailing slash (CORS matches exactly).
@@ -124,7 +130,7 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | `UserController` | `POST /users`                              | public | Signup, 201 `'User created'` `data.userCreated {email, sub}`; dup 400 `'Try with other email.'` |
 | `UserController` | `PUT /users`                               | JWT    | Profile names; `email` required and equal to the stored one; `password` → 400 |
 | `UserController` | `DELETE /users`                            | JWT    | Deletes the user (no cascade until S8) |
-| `UserController` | `POST /users/forgot-password`              | public | Always 201 `'Email Sent'`; stores sha256 of a one-time JWT, raw token only to the mailer port |
+| `UserController` | `POST /users/forgot-password`              | public | Always 201 `'Email Sent'`; stores sha256 of a one-time JWT, raw token only to the mailer port. Known email: awaits the Resend send (5 s timeout) of `${FRONTEND_URI}/reset-password/<token>`; a failed send is logged (`error.name`/`statusCode` only) and still 201 |
 | `UserController` | `POST /users/reset-password/:oneTimeToken` | public | 201 `'Reset Password Successfully'`; jsonwebtoken errors → 400 with their message; sets `passwordChangedAt` |
 
 ## Auth
@@ -134,7 +140,14 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 - Checks: `verifyAsync` with `JWT_KEY`, the user still exists (`findById`; non-ObjectId `sub` = missing), and `iat >= floor(passwordChangedAt/1000)` (a reset revokes older tokens). Every failure is the same message-less 401.
 - `req.user = { sub, iat, exp }` (`AuthenticatedRequest`); handlers pass `req.user.sub` to the service.
 - Two non-global `JwtModule`s: `AuthModule` (access, `JWT_KEY`) and `UserModule` (one-time reset, `ONE_TIME_JWT_KEY`). Never make either global, or the keys mix.
-- Login always runs bcrypt (against `DUMMY_PASSWORD_HASH` for unknown emails). Forgot-password has a no-op mailer until S3.
+- Login always runs bcrypt (against `DUMMY_PASSWORD_HASH` for unknown emails).
+
+## Mail
+
+- `MailService` (`src/mail`) implements the `ForgotPasswordMailer` port; `UserModule` imports `MailModule`. It renders the `.tsx` template to HTML itself and sends `html:` (no `react:` payload), with `AbortSignal.timeout(5000)`.
+- It never rejects: Resend `{ error }`, a thrown error or a timeout is logged as `forgot-password mail failed (<name>[, <status>])`; success logs `forgot-password mail sent (<resend id>)`. Logger context `ForgotPasswordMailer`. Never log the recipient, names, URL, token or Resend's `message`.
+- Outside production the Resend SDK itself `console.error`s `[Resend API Error]` with the full error (can include addresses); accepted, silent when `NODE_ENV=production`.
+- `<Head>` must stay inside `<Tailwind>` in templates, or the `hover:`/`focus:` classes make every render throw.
 
 ## Testing Structure
 
