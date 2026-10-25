@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Budget Master backend, NestJS 12 + TypeScript 6, ESM (`"type": "module"` — relative imports end in `.js`). It is currently the `nest new` starter: no database, config module, auth or OpenAPI docs yet. Package manager is **pnpm**.
+Budget Master backend, NestJS 12 + TypeScript 6, ESM (`"type": "module"` — relative imports end in `.js`). It has the S1 foundation (`@nestjs/config` + Joi, MongoDB via mongoose, response envelope, global error filters, ValidationPipe, CORS, cookie-parser, e2e harness); no feature modules, auth or OpenAPI docs yet. `.env` points at the prod DB, see `.env.example`. Package manager is **pnpm**.
 
 _(planned)_ This is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working, so no breaking API changes. The plan and progress live outside the repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -35,5 +35,5 @@ Unit tests use `vitest.config.ts` (`**/*.spec.ts`, co-located in `src/`); e2e us
 ## Branching & release
 
 - PRs target `main`. Every PR needs a `major`, `minor` or `patch` label (`check-label.yml` fails without one).
-- `ci.yml` runs `pnpm run lint`, `pnpm run build` and `pnpm test` on PRs to and pushes to `main`. E2E is not in CI.
+- `ci.yml` runs `pnpm run lint`, `pnpm run build`, `pnpm test` and `pnpm run test:e2e` (against a docker Mongo replica set) on PRs to and pushes to `main`, plus a gitleaks secret scan over the full history.
 - On merge to `main`, `update-changelog.yml` bumps `package.json` per the label, prepends the PR to `CHANGELOG.md`, commits, tags `vX.Y.Z` and pushes. Don't bump the version or edit the changelog by hand.
