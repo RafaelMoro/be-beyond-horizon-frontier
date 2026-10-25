@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password) and S3 mail (`mail` module: the forgot-password email via Resend).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend) and S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -61,6 +61,13 @@ src/
 │   ├── mail.constants.ts   # FORGOT_PASSWORD_SUBJECT (legacy), MAIL_SEND_TIMEOUT_MS (5000)
 │   ├── services/mail.service.ts (+ .spec)   # Resend send; null client (warn, no send) when a mail key is blank
 │   └── templates/reset-password.tsx (+ .spec, __snapshots__)  # legacy ResetPassword port + renderResetPassword()
+├── category/
+│   ├── category.module.ts  # forFeature(Category); imports UserModule (create-local user check); exports CategoryService
+│   ├── category.constants.ts # legacy texts + ALL_LOCAL_CATEGORIES (the 12 defaults, verbatim)
+│   ├── entities/category.entity.ts   # collection `categories`, `sub` is a string, index { sub: 1 }
+│   ├── dtos/category.dto.ts
+│   ├── services/category.service.ts (+ .spec)  # CRUD by owner, createLocalCategories (transaction), assertCategoryOwned (S7)
+│   └── controllers/category.controller.ts      # /categories routes
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -68,7 +75,8 @@ test/
 ├── setup-env.ts            # overwrites process.env for e2e; E2E_DB_NAME
 ├── create-test-app.ts      # createTestApp / closeTestApp
 ├── app.e2e-spec.ts
-└── auth-users.e2e-spec.ts
+├── auth-users.e2e-spec.ts
+└── categories.e2e-spec.ts
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -76,7 +84,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: budget feature modules (accounts, records…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: the other budget feature modules (accounts, records…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
@@ -90,6 +98,7 @@ Does **not** exist yet — don't assume it: budget feature modules (accounts, re
 
 - Connection in `AppModule`: `MongooseModule.forRootAsync({ inject: [config.KEY], useFactory: mongooseOptions })`. No separate `DatabaseModule` (`MongooseCoreModule` is global).
 - `mongooseOptions`: `serverSelectionTimeoutMS: 5000`, `retryAttempts` 0 under test / 2 otherwise, `retryDelay: 1000`, `autoIndex` only when `NODE_ENV=test` (prod indexes come from S8's script).
+- Multi-document writes use `connection.transaction` (no custom wrapper; rules in `IMPLEMENTATION_GUIDELINES.md` → Database → Transactions). First use: `createLocalCategories`.
 - Prod-DB guard: whenever `VITEST` is set or `NODE_ENV=test`, `assertTestMongoUri` requires `mongodb://` and every host in `localhost` / `127.0.0.1` / `[::1]`.
 
 ## Response envelope
@@ -132,6 +141,11 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | `UserController` | `DELETE /users`                            | JWT    | Deletes the user (no cascade until S8) |
 | `UserController` | `POST /users/forgot-password`              | public | Always 201 `'Email Sent'`; stores sha256 of a one-time JWT, raw token only to the mailer port. Known email: awaits the Resend send (5 s timeout) of `${FRONTEND_URI}/reset-password/<token>`; a failed send is logged (`error.name`/`statusCode` only) and still 201 |
 | `UserController` | `POST /users/reset-password/:oneTimeToken` | public | 201 `'Reset Password Successfully'`; jsonwebtoken errors → 400 with their message; sets `passwordChangedAt` |
+| `CategoryController` | `GET /categories`                      | JWT    | 200 `data.categories` (the user's docs without `sub`; `message: null`) |
+| `CategoryController` | `POST /categories`                     | JWT    | Body `{categoryName, subCategories, icon}`; 201 `'New category created'` `data.category` (incl. `sub`, `__v`) |
+| `CategoryController` | `PUT /categories`                      | JWT    | Body `{categoryId, categoryName?, subCategories?, icon?}`; 200 `data.category`; not owned/missing → 400 `'Category not found'` |
+| `CategoryController` | `DELETE /categories`                   | JWT    | Body `{categoryId}`; 200 `'Category deleted'` `data.category`; not owned/missing → 400 `'Category not found'`. Records are left as they are |
+| `CategoryController` | `POST /categories/create-local-categories` | public | Body `{sub}`; seeds the 12 defaults in a transaction for an existing user with no categories, stored `sub` = the user's id; 201 `'New category created'` `data.categories`. Unknown user or already has categories → 400 `'Local categories already exists'` |
 
 ## Auth
 

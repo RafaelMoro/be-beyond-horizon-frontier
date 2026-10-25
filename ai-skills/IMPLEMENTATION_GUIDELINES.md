@@ -246,6 +246,17 @@ A log line carries the method, the **route pattern** (`req.route?.path`) and the
 - The connection lives in `AppModule` (`MongooseModule.forRootAsync` + `mongooseOptions` in `src/mongoose-options.ts`). Feature modules register their schemas with `MongooseModule.forFeature`.
 - `autoIndex` is off outside tests (`start:dev` hits prod), so production indexes come from S8's script, not from schema `index`/`unique` at boot.
 
+### Transactions
+
+Multi-document writes use mongoose's own `connection.transaction(fn)`; there is no custom wrapper. Inject the connection with `@InjectConnection() connection: Connection` (`MongooseCoreModule` is global, no module import). Example: `CategoryService.createLocalCategories` (`src/category/services/category.service.ts`).
+
+- Every read/write inside `fn` gets `{ session }` (or `.session(session)`); an op without it runs outside the transaction.
+- `fn` may run more than once (retries on transient errors): no side effects (mail, logs claiming success) inside it, and re-check preconditions inside it.
+- Throwing (an `HttpException` or anything else) inside `fn` aborts; the global filters answer as usual.
+- Needs a replica set: e2e has one (`MongoMemoryReplSet` locally, docker `--replSet rs0` in CI), and so does Atlas.
+- Unit tests mock `connection.transaction` as `vi.fn((fn) => fn(fakeSession))`; atomicity is proven in e2e (a one-shot spy that writes part of the batch with the real session, then throws → 0 docs left).
+- In e2e, `await model.init()` in `beforeAll` before the first transaction, so collection/index creation doesn't race it.
+
 ## DTOs and the ValidationPipe
 
 The global `ValidationPipe` runs with `whitelist`, `forbidNonWhitelisted` and `transform: true`:
