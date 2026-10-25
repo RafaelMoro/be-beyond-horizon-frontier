@@ -5,6 +5,8 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import config, { envSchema } from './config.js';
 import { mongooseOptions } from './mongoose-options.js';
+import { UserModule } from './user/user.module.js';
+import { AuthModule } from './auth/auth.module.js';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { mongooseOptions } from './mongoose-options.js';
       inject: [config.KEY],
       useFactory: mongooseOptions,
     }),
+    UserModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

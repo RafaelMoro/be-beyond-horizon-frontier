@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Budget Master backend, NestJS 12 + TypeScript 6, ESM (`"type": "module"` — relative imports end in `.js`). It has the S1 foundation (`@nestjs/config` + Joi, MongoDB via mongoose, response envelope, global error filters, ValidationPipe, CORS, cookie-parser, e2e harness); no feature modules, auth or OpenAPI docs yet. `.env` points at the prod DB, see `.env.example`. Package manager is **pnpm**.
+Budget Master backend, NestJS 12 + TypeScript 6, ESM (`"type": "module"` — relative imports end in `.js`). It has the S1 foundation (`@nestjs/config` + Joi, MongoDB via mongoose, response envelope, global error filters, ValidationPipe, CORS, cookie-parser, e2e harness) and S2 auth + users (`src/user`, `src/auth`: global JWT guard, `@Public()` opt-out); no budget feature modules or OpenAPI docs yet. `.env` points at the prod DB, see `.env.example`. Package manager is **pnpm**.
 
 _(planned)_ This is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working, so no breaking API changes. The plan and progress live outside the repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 

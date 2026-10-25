@@ -16,7 +16,8 @@ const mongoPart = () =>
     otherwise: Joi.required(),
   });
 
-// Only the keys S1 consumes. @nestjs/config applies `allowUnknown`, so the legacy .env's other keys pass.
+// Only the keys the app consumes. @nestjs/config applies `allowUnknown`, so the legacy .env's other keys pass.
+// No length rule on the JWT keys: the owner's current keys must still boot.
 export const envSchema = Joi.object({
   MONGO_URI: Joi.string(),
   MONGO_CONNECTION: mongoPart(),
@@ -28,6 +29,8 @@ export const envSchema = Joi.object({
   TEST_FRONTEND_URI: origin(),
   DOMAIN_URI: origin(),
   NODE_ENV: Joi.string().required(),
+  JWT_KEY: Joi.string().required(),
+  ONE_TIME_JWT_KEY: Joi.string().required(),
 });
 
 export function buildMongoUri(env: NodeJS.ProcessEnv): string {
@@ -46,4 +49,6 @@ export default registerAs('config', () => ({
   testFrontendUri: process.env.TEST_FRONTEND_URI,
   domainUri: process.env.DOMAIN_URI,
   nodeEnv: process.env.NODE_ENV,
+  jwtKey: process.env.JWT_KEY,
+  jwtOneTimeKey: process.env.ONE_TIME_JWT_KEY,
 }));

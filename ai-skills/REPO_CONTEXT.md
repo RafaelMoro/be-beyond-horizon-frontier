@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness) and one controller returning `Hello World!`. No feature modules yet.
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, and S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -16,6 +16,7 @@ _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling c
 
 - NestJS 12 (`@nestjs/core` 12.2), Express platform (`@nestjs/platform-express`)
 - `@nestjs/config` 12 + Joi 18 (env validation), `@nestjs/mongoose` 12 + mongoose 9, class-validator / class-transformer, cookie-parser
+- `@nestjs/jwt` 12 (jsonwebtoken, HS256), `bcryptjs` 3 (cost 10). No passport.
 - TypeScript 6, ESM (`"type": "module"`, `module`/`moduleResolution: nodenext`, `strict: true`)
 - pnpm (`pnpm-lock.yaml`; CI pins pnpm 10, Node 22)
 - Vitest 4 (unit + e2e), supertest for e2e
@@ -35,14 +36,33 @@ src/
 ├── exceptions/
 │   ├── http-exception.filter.ts  # GeneralAppExceptionFilter (@Catch(HttpException))
 │   └── catch-all.filter.ts       # CatchAllExceptionFilter (@Catch())
-├── app.controller.ts       # GET /
+├── app.controller.ts       # GET / (@Public)
+├── auth/
+│   ├── auth.module.ts      # JwtModule (JWT_KEY, 5d) + APP_GUARD JwtAuthGuard; imports UserModule
+│   ├── auth.constants.ts   # cookie name/max-age, IS_PUBLIC_KEY, LOGIN_ERROR, DUMMY_PASSWORD_HASH
+│   ├── auth.interface.ts   # JwtPayload, AuthenticatedRequest, LoginBody (interface on purpose)
+│   ├── auth.utils.ts       # extractToken: accessToken cookie first, else Authorization: Bearer
+│   ├── decorators/public.decorator.ts
+│   ├── guards/jwt-auth.guard.ts (+ .spec)
+│   ├── services/auth.service.ts (+ .spec)   # login
+│   └── controllers/auth.controller.ts       # POST /auth, sets the cookie
+├── user/
+│   ├── user.module.ts      # forFeature(User), JwtModule (ONE_TIME_JWT_KEY, 1d), no-op FORGOT_PASSWORD_MAILER
+│   ├── user.constants.ts   # legacy texts, BCRYPT_COST, FORGOT_PASSWORD_MAILER token
+│   ├── user.interface.ts   # ForgotPasswordMail / ForgotPasswordMailer (mail port, S3 implements it)
+│   ├── user.utils.ts       # hashToken (sha256 hex)
+│   ├── entities/user.entity.ts       # collection `users`
+│   ├── dtos/user.dto.ts, user-responses.dto.ts
+│   ├── services/user.service.ts (+ .spec)
+│   └── controllers/user.controller.ts       # /users routes
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
 ├── global-setup.ts         # MONGO_TEST_URI or MongoMemoryReplSet → provide('mongoUri')
 ├── setup-env.ts            # overwrites process.env for e2e; E2E_DB_NAME
 ├── create-test-app.ts      # createTestApp / closeTestApp
-└── app.e2e-spec.ts
+├── app.e2e-spec.ts
+└── auth-users.e2e-spec.ts
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -50,12 +70,12 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: feature modules, auth, guards, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: budget feature modules (accounts, records…), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
 - `src/config.ts`. `ConfigModule.forRoot({ envFilePath: '.env', load: [config], isGlobal: true, validationSchema: envSchema })` in `AppModule`. Missing/invalid keys fail at startup with `Config validation error`.
-- Keys (legacy names): `MONGO_URI` **or** `MONGO_CONNECTION` + `MONGO_USER` + `MONGO_PWD` + `MONGO_HOST` (full host); `MONGO_DB_NAME`; `FRONTEND_URI`, `TEST_FRONTEND_URI`, `DOMAIN_URI`; `NODE_ENV`; optional `PORT`. Unknown keys are allowed. Later stories add their keys to `envSchema`, the `registerAs` object and `.env.example`.
+- Keys (legacy names): `MONGO_URI` **or** `MONGO_CONNECTION` + `MONGO_USER` + `MONGO_PWD` + `MONGO_HOST` (full host); `MONGO_DB_NAME`; `FRONTEND_URI`, `TEST_FRONTEND_URI`, `DOMAIN_URI`; `NODE_ENV`; `JWT_KEY` (access token, 5d), `ONE_TIME_JWT_KEY` (reset token, 1d); optional `PORT`. `PUBLIC_KEY` is no longer read. Unknown keys are allowed. Later stories add their keys to `envSchema`, the `registerAs` object and `.env.example`.
 - Read config by injecting `@Inject(config.KEY) c: ConfigType<typeof config>` (or `app.get(config.KEY)`), never `process.env` in services.
 - The owner's `.env` points at the **prod** DB (local dev uses prod data). Tests never read it for Mongo.
 - CORS origins are the three `*_URI` keys: scheme required, no trailing slash (CORS matches exactly).
@@ -95,9 +115,26 @@ Logging rule: method + route pattern (`req.route?.path`) + status (+ stack where
 
 ## Controllers and API Routes
 
-| Controller      | Route   | Guards | Purpose                               |
-| --------------- | ------- | ------ | ------------------------------------- |
-| `AppController` | `GET /` | none   | Starter route, returns `Hello World!` (`text/html`, no envelope) |
+Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
+
+| Controller       | Route                                      | Guard  | Purpose |
+| ---------------- | ------------------------------------------ | ------ | ------- |
+| `AppController`  | `GET /`                                    | public | Starter route, returns `Hello World!` (`text/html`, no envelope) |
+| `AuthController` | `POST /auth`                               | public | Login. Raw body `{email, password}` (no DTO); 201 `data.user`; `accessToken` cookie (bare JWT, first and only `Set-Cookie`, `HttpOnly; Secure; SameSite=Strict`, 5d). Bad creds 401 `'Email or Password incorrect.'`, missing 401 `'Unauthorized'` |
+| `UserController` | `POST /users`                              | public | Signup, 201 `'User created'` `data.userCreated {email, sub}`; dup 400 `'Try with other email.'` |
+| `UserController` | `PUT /users`                               | JWT    | Profile names; `email` required and equal to the stored one; `password` → 400 |
+| `UserController` | `DELETE /users`                            | JWT    | Deletes the user (no cascade until S8) |
+| `UserController` | `POST /users/forgot-password`              | public | Always 201 `'Email Sent'`; stores sha256 of a one-time JWT, raw token only to the mailer port |
+| `UserController` | `POST /users/reset-password/:oneTimeToken` | public | 201 `'Reset Password Successfully'`; jsonwebtoken errors → 400 with their message; sets `passwordChangedAt` |
+
+## Auth
+
+- `JwtAuthGuard` is registered as `APP_GUARD` in `AuthModule`. Opt out with `@Public()` (`src/auth/decorators/public.decorator.ts`) on a handler or a controller class.
+- Token: `accessToken` cookie wins; otherwise `Authorization: Bearer` (scheme case-insensitive). A bad cookie does not fall back to the header.
+- Checks: `verifyAsync` with `JWT_KEY`, the user still exists (`findById`; non-ObjectId `sub` = missing), and `iat >= floor(passwordChangedAt/1000)` (a reset revokes older tokens). Every failure is the same message-less 401.
+- `req.user = { sub, iat, exp }` (`AuthenticatedRequest`); handlers pass `req.user.sub` to the service.
+- Two non-global `JwtModule`s: `AuthModule` (access, `JWT_KEY`) and `UserModule` (one-time reset, `ONE_TIME_JWT_KEY`). Never make either global, or the keys mix.
+- Login always runs bcrypt (against `DUMMY_PASSWORD_HASH` for unknown emails). Forgot-password has a no-op mailer until S3.
 
 ## Testing Structure
 
@@ -135,9 +172,9 @@ Logging rule: method + route pattern (`req.route?.path`) + status (+ stack where
 
 Relative imports end in `.js` (`import { AppService } from './app.service.js';`).
 
-### Guard Stacking _(planned)_
+### Guard Stacking
 
-No guards exist yet. When they do: authentication guard first, then authorization.
+`JwtAuthGuard` (authentication) is the only guard, global. Any future authorization guard runs after it (register it after `AuthModule`'s `APP_GUARD`, or per route).
 
 ## Notes
 

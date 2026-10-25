@@ -6,6 +6,8 @@ const base = {
   TEST_FRONTEND_URI: 'http://localhost:4000',
   DOMAIN_URI: 'https://example.com',
   NODE_ENV: 'development',
+  JWT_KEY: 'jwt-key',
+  ONE_TIME_JWT_KEY: 'one-time-key',
 };
 const parts = {
   MONGO_CONNECTION: 'mongodb+srv',
@@ -19,7 +21,7 @@ const validate = (env: Record<string, string>) =>
 describe('envSchema', () => {
   it('accepts a legacy-style env plus MONGO_HOST', () => {
     expect(
-      validate({ ...base, ...parts, CLUSTER: 'cluster0', JWT_KEY: 'k' }).error,
+      validate({ ...base, ...parts, CLUSTER: 'cluster0' }).error,
     ).toBeUndefined();
   });
 
@@ -42,6 +44,16 @@ describe('envSchema', () => {
       /"FRONTEND_URI" is required/,
     );
   });
+
+  it.each(['JWT_KEY', 'ONE_TIME_JWT_KEY'] as const)(
+    'fails without %s',
+    (key) => {
+      const { [key]: _, ...rest } = base;
+      expect(validate({ ...rest, ...parts }).error?.message).toMatch(
+        new RegExp(`"${key}" is required`),
+      );
+    },
+  );
 
   it.each(['https://app.example.com/', 'example.com'])(
     'rejects FRONTEND_URI %s',
