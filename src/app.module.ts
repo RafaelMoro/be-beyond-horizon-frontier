@@ -8,6 +8,7 @@ import { mongooseOptions } from './mongoose-options.js';
 import { UserModule } from './user/user.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { MailModule } from './mail/mail.module.js';
+import { CategoryModule } from './category/category.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { MailModule } from './mail/mail.module.js';
     UserModule,
     AuthModule,
     MailModule,
+    CategoryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
