@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0 (2026-10-25)
+
+### Pull Requests
+[#4](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/4) | feat: auth-users — signup, login cookie, global JWT guard, profile, delete, forgot/reset password
+
+
 ## v0.3.0 (2026-10-25)
 
 ### Pull Requests
