@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.0 (2026-10-26)
+
+### Pull Requests
+[#14](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/14) | feat: lambda-handler — Lambda entrypoint, osls config, pnpm-aware packaging
+
+
 ## v0.13.0 (2026-10-26)
 
 ### Pull Requests
