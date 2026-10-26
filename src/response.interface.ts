@@ -2,6 +2,7 @@ export interface GeneralResponse {
   version: string;
   success: boolean;
   data: unknown;
-  message: string | null;
+  // string[]: the record mutations' step log (D10).
+  message: string | string[] | null;
   error: string | object | null;
 }
