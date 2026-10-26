@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.0 (2026-10-26)
+
+### Pull Requests
+[#11](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/11) | feat: records-transfers-listing — POST /records/transfer, combined monthly listing
+
+
 ## v0.10.0 (2026-10-26)
 
 ### Pull Requests
