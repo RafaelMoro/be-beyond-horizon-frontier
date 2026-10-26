@@ -280,7 +280,7 @@ export class IncomeService {
   }
 
   // The caller's existing expenses among ids, in input order (Q6: only these are stored).
-  private async ownedExpenseIds({
+  async ownedExpenseIds({
     ids,
     sub,
     session,
@@ -315,7 +315,7 @@ export class IncomeService {
   }
 
   // The income side's paid step; S7c's transfer create reuses it inside its own transaction.
-  private async payExpenses({
+  async payExpenses({
     ids,
     owned,
     sub,
