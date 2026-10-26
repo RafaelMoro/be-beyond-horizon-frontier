@@ -64,3 +64,18 @@ export function getMonthBounds(
     endDate: new Date(Date.UTC(y, m + 1, 1)),
   };
 }
+
+const OBJECT_ID_HEX = /^[0-9a-fA-F]{24}$/;
+
+// `expensesPaid` elements: an id string or an expense object (old-next echoes them, research §3). Deduped, input
+// order; null if any element is neither, so no object ever reaches a query (operator injection).
+export function toExpenseIds(values: unknown[]): string[] | null {
+  const ids: string[] = [];
+  for (const v of values) {
+    const id =
+      v !== null && typeof v === 'object' ? (v as { _id?: unknown })._id : v;
+    if (typeof id !== 'string' || !OBJECT_ID_HEX.test(id)) return null;
+    ids.push(id.toLowerCase());
+  }
+  return [...new Set(ids)];
+}

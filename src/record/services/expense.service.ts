@@ -32,6 +32,7 @@ import {
   MISSING_CATEGORY,
   MISSING_DATE,
   MISSING_LINKED_BUDGETS,
+  RECORD_UPDATABLE_FIELDS,
   TRANSFER_RECORD_LINKED_BUDGET_ERROR,
   TYPE_OF_RECORD_INVALID,
 } from '../record.constants.js';
@@ -43,22 +44,7 @@ import {
   toMexicoCityWallClock,
 } from '../record.utils.js';
 
-// Never recordId or userId.
-const UPDATABLE_FIELDS = [
-  'shortName',
-  'typeOfRecord',
-  'description',
-  'amount',
-  'date',
-  'category',
-  'subCategory',
-  'tag',
-  'indebtedPeople',
-  'transferRecord',
-  'account',
-  'budgets',
-  'isPaid',
-] as const;
+const UPDATABLE_FIELDS = [...RECORD_UPDATABLE_FIELDS, 'isPaid'] as const;
 
 interface BudgetStep {
   budgetId: string;
