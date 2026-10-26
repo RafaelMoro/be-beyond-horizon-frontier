@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port) and S7c records-transfers-listing (`POST /records/transfer`: both sides, both balances and the income side's paid flags in one transaction; `GET /records/expenses-and-incomes` merged monthly listing; no transfer edit/delete route, each side goes through its own route, D9) and S8a hardening-code (`DELETE /users` cascades to every owned collection in one transaction, helmet defaults, Mongo-backed rate limits on login and forgot-password: `rate-limit` module) and S8b hardening-scripts (operator scripts in `src/scripts/`: the prod index script and the data-repair report + `--apply` fix).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port) and S7c records-transfers-listing (`POST /records/transfer`: both sides, both balances and the income side's paid flags in one transaction; `GET /records/expenses-and-incomes` merged monthly listing; no transfer edit/delete route, each side goes through its own route, D9) and S8a hardening-code (`DELETE /users` cascades to every owned collection in one transaction, helmet defaults, Mongo-backed rate limits on login and forgot-password: `rate-limit` module) and S8b hardening-scripts (operator scripts in `src/scripts/`: the prod index script and the data-repair report + `--apply` fix) and S9a lambda-handler (`src/lambda.ts` ESM Lambda handler, `serverless.yml`, pnpm-aware zip, offline run; the deploy itself is the owner's S9b, see [Owner runbook](#owner-runbook-s9b)).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -21,6 +21,7 @@ _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling c
 - `resend` 6 (mail), `@react-email/components` 1 + `react` 19 (templates rendered to HTML), all exact-pinned (the template snapshot depends on the renderer)
 - TypeScript 6, ESM (`"type": "module"`, `module`/`moduleResolution: nodenext`, `strict: true`, `jsx: react-jsx` for the `.tsx` mail templates under `src/mail/templates`)
 - pnpm (`pnpm-lock.yaml`; CI pins pnpm 10, Node 22)
+- AWS Lambda (`nodejs22.x`, REST API): `@codegenie/serverless-express` 4.17.1 (5.x needs Node ≥ 24); osls 3.78.0 + serverless-offline 13.10.1 (dev). No bundler.
 - Vitest 4 (unit + e2e), supertest for e2e
 - oxlint (lint), Prettier (format)
 
@@ -29,6 +30,7 @@ _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling c
 ```
 src/
 ├── main.ts                 # bootstrap: configureApp + enableShutdownHooks; listens on process.env.PORT ?? 3000
+├── lambda.ts (+ .spec)     # Lambda handler: cached bootstrap promise (create → configureApp → init → serverlessExpress), reset on failure; '' path → '/'
 ├── configure-app.ts        # configureApp(app): helmet (first, defaults), cookie-parser, ValidationPipe, filters, CORS (shared with e2e)
 ├── app.module.ts           # root module: ConfigModule + MongooseModule.forRootAsync, AppController + AppService
 ├── config.ts               # envSchema (Joi), buildMongoUri, registerAs('config') typed config
@@ -128,7 +130,12 @@ test/
 ├── records-transfers.e2e-spec.ts
 ├── user-delete.e2e-spec.ts
 ├── rate-limit.e2e-spec.ts
-└── db-scripts.e2e-spec.ts  # index script + data repair against the local replica set
+├── db-scripts.e2e-spec.ts  # index script + data repair against the local replica set
+└── lambda.e2e-spec.ts      # real handler (REST v1 events) vs the main.ts path: parity, CORS, cookies; sourceIp-keyed IP bucket
+serverless.yml              # osls 3: service beyond-horizon-frontier-api, stages local/beta/production, ANY / + ANY /{proxy+}
+deploy/env.aws.yml          # beta/production env: ${ssm:/beyond-horizon-frontier/<stage>/KEY}
+deploy/env.local.yml        # --stage local only (offline/print): dummy values, NODE_ENV=test
+scripts/package-lambda.sh   # pnpm run package:lambda → .lambda/api.zip (gitignored) + self-checks
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -136,7 +143,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`, interceptors, a custom logger, request ids, `/health`, `trust proxy` (S9), OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`, interceptors, a custom logger, request ids, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`). `trust proxy` is **deliberately off** (E9.Q1), see Notes.
 
 ## Config
 
@@ -163,7 +170,7 @@ Owner only, with his `.env` (prod), from the repo root, after `pnpm run build`. 
 3. Recommended: an Atlas snapshot / `mongodump` first. Then `node dist/scripts/data-repair.cli.js --apply --db=<name> [--r4-map=<path>]`: R1 `$unset`, R2 repoint to the owner's single same-name category, R4 per map, R5 / R7 delete, R6 `$pull`, R8 delete unreferenced orphans (last); each case re-detected and fixed in its own transaction, a failed case stops the run. No balance / budget / history / `expensesPaid` / transfer-pair adjustment.
 4. Re-run the report: R1, matched R2, mapped R4, R5, R6, R7 and unreferenced R8 are 0; R3, unmatched R2, unmapped R4 and referenced R8 remain by decision.
 
-Output is ids only (Q11: no names, emails, amounts, card digits): don't paste it into the repo or the notes. `dist/scripts` lands in S9's Lambda bundle (inert; S9 may exclude it).
+Output is ids only (Q11: no names, emails, amounts, card digits): don't paste it into the repo or the notes. `dist/scripts` is excluded from the Lambda zip: run the scripts locally (`pnpm run build`) against the target DB.
 
 ## Response envelope
 
@@ -268,8 +275,34 @@ The unique `{ budget: 1, sub: 1 }` and `{ sub: 1 }` budget indexes build only un
 
 - PRs target `main` (no `develop`). Feature branches are named `feat/<topic>`.
 - `check-label.yml`: every PR needs a `major`, `minor` or `patch` label.
-- `ci.yml`: on PRs to and pushes to `main` — job `verify`: `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, a Node-ESM import of `dist/app.module.js` with a dummy env (catches CJS named value imports like `{ Connection } from 'mongoose'` that only break `node dist/main.js`; import types with `type`), `pnpm test`, then a `mongo:8` replica set via `docker run --replSet rs0` and `pnpm run test:e2e` with `MONGO_TEST_URI`. Job `secrets` (parallel): gitleaks (`ghcr.io/gitleaks/gitleaks:v8.30.1`) over the full git history with `--redact`.
+- `ci.yml`: on PRs to and pushes to `main` — job `verify`: `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, a Node-ESM import of `dist/app.module.js` with a dummy env (catches CJS named value imports like `{ Connection } from 'mongoose'` that only break `node dist/main.js`; import types with `type`), `pnpm test`, `pnpm run package:lambda` (builds the Lambda zip and runs its self-checks, no AWS), then a `mongo:8` replica set via `docker run --replSet rs0` and `pnpm run test:e2e` with `MONGO_TEST_URI`. Job `secrets` (parallel): gitleaks (`ghcr.io/gitleaks/gitleaks:v8.30.1`) over the full git history with `--redact`.
 - `update-changelog.yml`: on merge to `main`, bumps `package.json` version per the label (highest wins), prepends the PR to `CHANGELOG.md`, commits `chore(release): vX.Y.Z (<bump>)`, tags `vX.Y.Z` and pushes.
+
+## AWS Lambda
+
+- **Handler** `src/lambda.ts` → `dist/lambda.handler` (ESM, next to `main.ts` so `constants.ts`' `../package.json` resolves to the zip root). Same setup as `main.ts` minus `listen` / `enableShutdownHooks`. The bootstrap **promise** is cached per container (concurrent cold invocations share it); a rejected bootstrap is dropped so the next invocation retries. An empty `event.path` becomes `/` (legacy root fix). The adapter is imported as the named `configure` (its CJS `.d.ts` makes the default import uncallable under `nodenext`).
+- **`serverless.yml`** (osls 3): service `beyond-horizon-frontier-api` (stacks `-beta` / `-production`; legacy `budget-master-api` / `budget-master-test-api` are separate and untouched), `us-east-1`, `nodejs22.x`, `timeout: 15`, default memory, `logRetentionInDays: 14` (cutover value), REST API events `ANY /` + `ANY /{proxy+}`. `provider.stage: ${opt:stage}` has **no default** (a bare `osls deploy` fails).
+- **Stages / env:** `custom.envFile` picks the file per stage; only that file is read. `local` → `deploy/env.local.yml` (dummy, `NODE_ENV=test`, local Mongo, no SSM, no AWS). `beta` / `production` → `deploy/env.aws.yml`: `NODE_ENV=production` plus every key from SSM `/beyond-horizon-frontier/<stage>/<KEY>`, resolved at deploy time (SecureString: `MONGO_PWD`, `JWT_KEY`, `ONE_TIME_JWT_KEY`, `RESEND_API_KEY`; the rest String). A missing parameter fails the deploy.
+- **Package:** `pnpm run package:lambda` (`scripts/package-lambda.sh`) builds, stages only `dist/` (minus `dist/scripts`, `*.map`, `*.d.ts`) + `package.json` + lockfile, runs `pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted` (flat `node_modules`), deletes any `.env*`, zips with `python3 -m zipfile` to `.lambda/api.zip` (`package.artifact`), then checks: no `.env*` / `src/` / `test/` / `dist/scripts/` entries, has `dist/lambda.js`, and the unzipped package imports under Node ESM with `env -i` + a dummy env. ~24 MB zipped / ~133 MB unzipped. Why prebuilt: osls's own packaging excludes dev deps via `npm ls`, which doesn't understand pnpm's symlinked tree. No bundler.
+- **Offline:** `pnpm run offline:lambda` (build + `osls offline --stage local`, `http://localhost:3000/local/...`) needs a local replica set on `127.0.0.1:27017` (`rs0`). Known offline-only gaps (serverless-offline 13.10.1, not API Gateway): the login `Set-Cookie` makes its hapi server answer 500 `Invalid cookie value` (it re-parses the cookie together with its attributes), and `OPTIONS` preflights are answered by offline itself (200), not by the app (204). `test/lambda.e2e-spec.ts` covers both on the real handler.
+- `pnpm exec osls print --stage local` resolves the config with no credentials. Never run `print` / `package` / `deploy` for `beta` / `production` outside the runbook (they resolve SSM).
+
+## Owner runbook (S9b)
+
+Deploys are the owner's, by hand; nothing here runs in CI.
+
+0. **Find the live legacy stack:** Vercel project → env `NEXT_PUBLIC_BACKEND_URI` (`7xrrj66eka` = `budget-master-api`, `t4ry6x0fc2` = `budget-master-test-api`). Write it down: it is the rollback target. Don't touch either legacy stack.
+1. **Secrets (Critical H1):** new `JWT_KEY` and `ONE_TIME_JWT_KEY` (e.g. `openssl rand -base64 48`), a new Resend API key, and a **new least-privilege Atlas DB user** for the new stack (its user/password go to SSM). Do **not** rotate the shared legacy user's password: the legacy stacks keep using it, so the rollback in step 10 keeps working. Atlas network access `0.0.0.0/0` (no VPC). Rotating `JWT_KEY` logs every user out once.
+2. **Resend:** verify the `beyond-horizon-frontier` domain and pick `MAILER_MAIL` on it (needed before beta, which runs `NODE_ENV=production` and refuses blank mail keys).
+3. **SSM** per stage (`beta`, `production`) under `/beyond-horizon-frontier/<stage>/` (AWS console → Systems Manager → Parameter Store, `us-east-1`): `MONGO_PWD`, `JWT_KEY`, `ONE_TIME_JWT_KEY`, `RESEND_API_KEY` as **SecureString**; as String `MONGO_CONNECTION` (`mongodb+srv`), `MONGO_USER`, `MONGO_HOST` (full Atlas host), `MONGO_DB_NAME`, `MAILER_MAIL`, `FRONTEND_URI` (today `https://next-budget-master.vercel.app`), `TEST_FRONTEND_URI` (beta: `http://localhost:3000` for the local old-next smoke), `DOMAIN_URI` (the new domain's origin). Origins exact, scheme included, no trailing slash. Enter secret values without leaving them in shell history (console, or `read -s`).
+4. **AWS credentials** for the deploy: an IAM user/profile allowed to deploy CloudFormation / Lambda / API Gateway / S3 / CloudWatch Logs and read those SSM parameters; `export AWS_PROFILE=<profile>`.
+5. **Before the prod switch, S8b:** Atlas snapshot; `pnpm run build`; `node dist/scripts/db-indexes.cli.js`, then `--apply --db=<name>` (creates the `ratelimits` TTL index; without it the collection grows forever); `node dist/scripts/data-repair.cli.js` report, then `--apply` (see [Operator scripts](#operator-scripts)).
+6. **Beta:** `pnpm run deploy:lambda --stage beta`; note the printed URL (`https://<id>.execute-api.us-east-1.amazonaws.com/beta`).
+7. **Smoke** (beta shares the prod DB): old-next locally with `NEXT_PUBLIC_BACKEND_URI=<beta URL>`: login, accounts, records, transfer, budgets, forgot-password to an `.invalid` address; then `DELETE /users` for the smoke user (cascades). If the browser blocks responses on CORP, apply the agreed helmet fallback in a PR. Any other failure → fix in a PR before step 8.
+8. **Production:** `pnpm run deploy:lambda --stage production`; URL `https://<id>.execute-api.us-east-1.amazonaws.com/production`.
+9. **Switch:** Vercel env `NEXT_PUBLIC_BACKEND_URI` = the new prod URL, **redeploy** (it is inlined at build), verify login + one read + one write on the Vercel URL. (Vercel's own `GET /` 500 is old-next's, not the backend.)
+10. **Rollback:** Vercel env back to the step-0 URL + redeploy. The legacy stacks and their Atlas user were never touched. Keep the old Resend key and the legacy Atlas user until the switch is verified.
+11. **After verification:** lower `logRetentionInDays` from 14 in `serverless.yml` via a PR and redeploy; revoke the old Resend key; remove the legacy Atlas user only when the legacy stacks are decommissioned (later).
 
 ## Adding New Modules
 
@@ -300,7 +333,7 @@ Relative imports end in `.js` (`import { AppService } from './app.service.js';`)
 ## Notes
 
 - `.env.example` documents every key; `.env` is gitignored.
-- `package.json` has a `deploy` script (`nest deploy`, with `@nestjs/mau` installed), but there is no deployment config or deploy workflow in the repo. _(planned)_ deployment target is not decided here; check the external plan.
+- Deployment target is AWS Lambda (see [AWS Lambda](#aws-lambda)); deploys are manual by the owner, there is no CI deploy job. The old `deploy` script (`nest deploy`, `@nestjs/mau`) is unrelated and left as is.
 - `dist/` and `*.tsbuildinfo` are build output (gitignored).
-- **S9** must set Express `trust proxy` (API Gateway's hop only); until then `req.ip` is the socket address and, deployed, every forgot-password call shares one IP bucket.
+- On Lambda `req.ip` is API Gateway's `requestContext.identity.sourceIp` (the adapter puts it on the fake socket). **Never enable `trust proxy`**: it would make the forgot-password IP bucket client-controlled through `X-Forwarded-For` (`test/lambda.e2e-spec.ts` proves the header is ignored).
 - helmet runs with defaults; if old-next breaks on CORP, the agreed fallback is `crossOriginResourcePolicy: { policy: 'cross-origin' }`.
