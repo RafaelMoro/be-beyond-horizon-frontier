@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.0 (2026-10-26)
+
+### Pull Requests
+[#12](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/12) | feat: hardening-code — user-delete cascade, helmet, login and forgot-password rate limits
+
+
 ## v0.11.0 (2026-10-26)
 
 ### Pull Requests
