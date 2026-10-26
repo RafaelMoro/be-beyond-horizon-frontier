@@ -28,12 +28,16 @@ pnpm test app.controller        # single test file by path filter
 pnpm test -t "should return"    # single test by name
 pnpm run test:e2e               # vitest run --config ./vitest.config.e2e.ts
 pnpm run test:cov               # coverage → coverage/
+pnpm run package:lambda         # build + .lambda/api.zip + its self-checks (no AWS)
+pnpm run offline:lambda         # serverless-offline, --stage local (needs a local Mongo replica set on 127.0.0.1:27017)
 ```
+
+Deploys (`pnpm run deploy:lambda --stage <beta|production>`) are the owner's only; see the Owner runbook in `ai-skills/REPO_CONTEXT.md`.
 
 Unit tests use `vitest.config.ts` (`**/*.spec.ts`, co-located in `src/`); e2e uses `vitest.config.e2e.ts` (`**/*.e2e-spec.ts`, in `test/`). Both set `globals: true`. Lint rules live in `oxlint.json`, formatting in `.prettierrc`.
 
 ## Branching & release
 
 - PRs target `main`. Every PR needs a `major`, `minor` or `patch` label (`check-label.yml` fails without one).
-- `ci.yml` runs `pnpm run lint`, `pnpm run build`, `pnpm test` and `pnpm run test:e2e` (against a docker Mongo replica set) on PRs to and pushes to `main`, plus a gitleaks secret scan over the full history.
+- `ci.yml` runs `pnpm run lint`, `pnpm run build`, `pnpm run package:lambda`, `pnpm test` and `pnpm run test:e2e` (against a docker Mongo replica set) on PRs to and pushes to `main`, plus a gitleaks secret scan over the full history.
 - On merge to `main`, `update-changelog.yml` bumps `package.json` per the label, prepends the PR to `CHANGELOG.md`, commits, tags `vX.Y.Z` and pushes. Don't bump the version or edit the changelog by hand.

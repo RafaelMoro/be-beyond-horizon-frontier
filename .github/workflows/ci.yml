@@ -33,6 +33,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run build
+      # Lambda zip (hoisted prod install) + its self-checks: no .env*/src/test/dist/scripts, loads under Node ESM. No AWS.
+      - run: pnpm run package:lambda
       # Node's own ESM loader (Vitest's interop hides it): a value import of a CJS name, e.g.
       # `import { Connection } from 'mongoose'`, breaks `node dist/main.js` at link time. Import only, no DB connect.
       - name: Built app loads under Node ESM

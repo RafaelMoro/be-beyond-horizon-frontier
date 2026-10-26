@@ -1,0 +1,36 @@
+# Deploy only via `pnpm run deploy:lambda --stage <beta|production>` (builds a fresh zip first).
+# `--stage local` is for `pnpm run offline:lambda` / `osls print` only: it reads deploy/env.local.yml and no SSM.
+service: beyond-horizon-frontier-api
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: us-east-1
+  # No default on purpose: a bare `osls deploy` must fail instead of hitting production.
+  stage: ${opt:stage}
+  timeout: 15
+  # Cutover value (legacy is 1); lower it after S9b.
+  logRetentionInDays: 14
+  # Only the selected stage's file is read, so `local` never resolves an ${ssm:...}. Unknown stages fail here.
+  environment: ${file(./deploy/${self:custom.envFile.${sls:stage}})}
+
+custom:
+  envFile:
+    local: env.local.yml
+    beta: env.aws.yml
+    production: env.aws.yml
+
+# Prebuilt by scripts/package-lambda.sh (hoisted prod install): osls never packages the pnpm tree itself.
+package:
+  artifact: .lambda/api.zip
+
+functions:
+  api:
+    handler: dist/lambda.handler
+    events:
+      - http: ANY /
+      - http: ANY /{proxy+}
+
+plugins:
+  - serverless-offline
