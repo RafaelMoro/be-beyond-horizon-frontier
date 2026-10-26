@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.10.0 (2026-10-26)
+
+### Pull Requests
+[#10](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/10) | feat: records-incomes — income CRUD, expensesPaid flags, account record cascade
+
+
 ## v0.9.0 (2026-10-26)
 
 ### Pull Requests
