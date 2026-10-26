@@ -1,4 +1,8 @@
-import { INestApplication, Type } from '@nestjs/common';
+import type {
+  INestApplication,
+  INestApplicationContext,
+  Type,
+} from '@nestjs/common';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
 import type { Connection } from 'mongoose';
@@ -24,7 +28,9 @@ export async function createTestApp(
   return app;
 }
 
-export async function closeTestApp(app: INestApplication): Promise<void> {
+export async function closeTestApp(
+  app: INestApplicationContext,
+): Promise<void> {
   try {
     const conn = app.get<Connection>(getConnectionToken());
     const name = conn.db?.databaseName;

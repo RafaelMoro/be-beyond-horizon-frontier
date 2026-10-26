@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port) and S7c records-transfers-listing (`POST /records/transfer`: both sides, both balances and the income side's paid flags in one transaction; `GET /records/expenses-and-incomes` merged monthly listing; no transfer edit/delete route, each side goes through its own route, D9) and S8a hardening-code (`DELETE /users` cascades to every owned collection in one transaction, helmet defaults, Mongo-backed rate limits on login and forgot-password: `rate-limit` module).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port) and S7c records-transfers-listing (`POST /records/transfer`: both sides, both balances and the income side's paid flags in one transaction; `GET /records/expenses-and-incomes` merged monthly listing; no transfer edit/delete route, each side goes through its own route, D9) and S8a hardening-code (`DELETE /users` cascades to every owned collection in one transaction, helmet defaults, Mongo-backed rate limits on login and forgot-password: `rate-limit` module) and S8b hardening-scripts (operator scripts in `src/scripts/`: the prod index script and the data-repair report + `--apply` fix).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -108,6 +108,10 @@ src/
 │   ├── rate-limit.constants.ts # RATE_LIMITS (login 10/15 min, forgotPasswordEmail 3/h, forgotPasswordIp 10/h), TOO_MANY_REQUESTS
 │   ├── entities/rate-limit.entity.ts   # collection `ratelimits`: _id `scope:sha256(trim+lowercase value):bucket`, count, expiresAt (TTL index)
 │   └── services/rate-limit.service.ts (+ .spec)  # consume(hits): $inc upsert per key (fixed window), 429 if any key is over
+├── scripts/                # operator scripts (S8b), built to dist/scripts/; NOT imported by the app
+│   ├── script-runner.ts (+ .spec)  # parseScriptArgs (strict: --apply, --db, --r4-map), assertApplyTarget, createScriptContext (AppModule app context), runScript (target line, guard, exit code)
+│   ├── db-indexes.ts (+ .spec), db-indexes.cli.ts    # createMissingIndexes: diffIndexes + createIndexes only, never drops
+│   └── data-repair.ts (+ .spec), data-repair.cli.ts  # loadSnapshot / classify (R1–R8) / printCases / loadR4Map / repairData (one transaction per case)
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -123,7 +127,8 @@ test/
 ├── records-incomes.e2e-spec.ts
 ├── records-transfers.e2e-spec.ts
 ├── user-delete.e2e-spec.ts
-└── rate-limit.e2e-spec.ts
+├── rate-limit.e2e-spec.ts
+└── db-scripts.e2e-spec.ts  # index script + data repair against the local replica set
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -131,7 +136,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`, interceptors, a custom logger, request ids, `/health`, `trust proxy` (S9), the prod index/TTL script and orphan clean-up (S8b), OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`, interceptors, a custom logger, request ids, `/health`, `trust proxy` (S9), OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
@@ -144,10 +149,21 @@ Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`
 ## Database
 
 - Connection in `AppModule`: `MongooseModule.forRootAsync({ inject: [config.KEY], useFactory: mongooseOptions })`. No separate `DatabaseModule` (`MongooseCoreModule` is global).
-- `mongooseOptions`: `serverSelectionTimeoutMS: 5000`, `retryAttempts` 0 under test / 2 otherwise, `retryDelay: 1000`, `autoIndex` only when `NODE_ENV=test` (prod indexes come from S8's script).
+- `mongooseOptions`: `serverSelectionTimeoutMS: 5000`, `retryAttempts` 0 under test / 2 otherwise, `retryDelay: 1000`, `autoIndex` only when `NODE_ENV=test` (prod indexes come from `node dist/scripts/db-indexes.cli.js`, never `syncIndexes`; prod's undeclared `date_1` / `userId_1` on `createexpenses` are kept on purpose).
 - Multi-document writes use `connection.transaction` (no custom wrapper; rules in `IMPLEMENTATION_GUIDELINES.md` → Database → Transactions). First use: `createLocalCategories`.
-- `ratelimits`: one doc per key and fixed window (`_id` = `scope:sha256(trim+lowercase value):bucket`, `count`, `expiresAt` = window end); no email or IP in clear. Correctness doesn't depend on the TTL index `{ expiresAt: 1 }, expireAfterSeconds: 0` (built only under test until S8b's script). In prod the collection appears on the first login from `start:dev` (D16).
+- `ratelimits`: one doc per key and fixed window (`_id` = `scope:sha256(trim+lowercase value):bucket`, `count`, `expiresAt` = window end); no email or IP in clear. Correctness doesn't depend on the TTL index `{ expiresAt: 1 }, expireAfterSeconds: 0` (built only under test until the owner runs the index script with `--apply`). In prod the collection appears on the first login from `start:dev` (D16).
 - Prod-DB guard: whenever `VITEST` is set or `NODE_ENV=test`, `assertTestMongoUri` requires `mongodb://` and every host in `localhost` / `127.0.0.1` / `[::1]`.
+
+## Operator scripts
+
+Owner only, with his `.env` (prod), from the repo root, after `pnpm run build`. Never CI, never at boot. They boot `AppModule` as an application context (same config validation, `mongooseOptions`, models; no HTTP). First line: `target: <host> db=<name> mode=<dry-run|apply>`; `--apply` also needs `--db=<that name>`. Use `node …` directly: no `pnpm run … --` (the strict parser rejects a stray `--`).
+
+1. `node dist/scripts/db-indexes.cli.js` (dry-run: missing indexes, extras listed as kept), then `… --apply --db=<name>`. An E11000 / options conflict is reported per collection (`NOT created`), exit 1.
+2. `node dist/scripts/data-repair.cli.js`: read-only report, R1–R8 counts and `_id`s. For R4, write `{ "<recordId>": "<categoryId>" }` to a file **outside the repo** (ids only) and pass `--r4-map=<path>`.
+3. Recommended: an Atlas snapshot / `mongodump` first. Then `node dist/scripts/data-repair.cli.js --apply --db=<name> [--r4-map=<path>]`: R1 `$unset`, R2 repoint to the owner's single same-name category, R4 per map, R5 / R7 delete, R6 `$pull`, R8 delete unreferenced orphans (last); each case re-detected and fixed in its own transaction, a failed case stops the run. No balance / budget / history / `expensesPaid` / transfer-pair adjustment.
+4. Re-run the report: R1, matched R2, mapped R4, R5, R6, R7 and unreferenced R8 are 0; R3, unmatched R2, unmapped R4 and referenced R8 remain by decision.
+
+Output is ids only (Q11: no names, emails, amounts, card digits): don't paste it into the repo or the notes. `dist/scripts` lands in S9's Lambda bundle (inert; S9 may exclude it).
 
 ## Response envelope
 
@@ -173,7 +189,7 @@ Logging rule: method + route pattern (`req.route?.path`) + status (+ stack where
 ## E2E harness
 
 - `createTestApp({ controllers? })` builds `AppModule` (+ optional test-only controllers), runs `configureApp`, `init()`. It calls `assertTestMongoUri` before compiling.
-- `closeTestApp(app)` drops the DB only if its name is `budget-master-e2e`, then closes the app.
+- `closeTestApp(app)` (any `INestApplicationContext`, also the scripts' `createScriptContext()`) drops the DB only if its name is `budget-master-e2e`, then closes the app.
 - `test/global-setup.ts` uses `MONGO_TEST_URI` (CI: docker replica set) or starts a `MongoMemoryReplSet` locally; `test/setup-env.ts` overwrites `process.env` so `.env` never decides the target.
 
 ## Controllers and API Routes
@@ -223,7 +239,7 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 
 `BUDGET_EXPENSES_UNLINK` is provided by the global `RecordModule` (`$pull` from the owner's expenses in the budget-delete transaction); `ACCOUNT_RECORDS_CASCADE` is provided by the same module (`deleteMany` of the owner's expenses and incomes on that account, in the account-delete transaction; no paid-flag or transfer-counterpart effects).
 
-The unique `{ budget: 1, sub: 1 }` and `{ sub: 1 }` budget indexes build only under test (`autoIndex`); prod gets them from S8's script, so until then a duplicate history POST on prod creates a second doc.
+The unique `{ budget: 1, sub: 1 }` and `{ sub: 1 }` budget indexes build only under test (`autoIndex`); prod gets them when the owner runs the index script with `--apply`, so until then a duplicate history POST on prod creates a second doc.
 
 ## Auth
 
