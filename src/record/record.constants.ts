@@ -95,3 +95,17 @@ export const EXPENSES_PAID_POPULATE = {
   path: 'expensesPaid',
   select: '_id shortName amountFormatted fullDate formattedTime',
 };
+
+// develop: src/domain/records/constants/index.ts (the /records listing and transfer texts).
+export const NO_EXPENSES_INCOMES_FOUND = 'No incomes or expenses found.';
+export const NO_EXPENSES_FOUND = 'No expenses found.';
+export const NO_INCOMES_FOUND = 'No incomes found.';
+export const TRANSFER_ACCOUNT_ERROR =
+  'Income account and expense account must be different';
+export const TRANSFER_EXPENSE_NOT_PAID =
+  'The expense transfer record must have value isPaid as true';
+export const TRANSFER_EXPENSE_BUDGETS =
+  'The expense transfer record cannot have linked budgets';
+export const transferMismatch = (
+  field: 'short name' | 'amounts' | 'dates' | 'category' | 'subCategory',
+) => `Transfer records has different ${field}. Both must have the same value`;

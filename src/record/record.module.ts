@@ -12,6 +12,8 @@ import { Income, IncomeSchema } from './entities/income.entity.js';
 import { ExpenseService } from './services/expense.service.js';
 import { IncomeService } from './services/income.service.js';
 import { RecordPortsService } from './services/record-ports.service.js';
+import { RecordService } from './services/record.service.js';
+import { RecordController } from './controllers/record.controller.js';
 
 // Global so AccountModule and BudgetModule resolve their ports without importing this module (E7.Q2; this module
 // imports both).
@@ -32,8 +34,9 @@ import { RecordPortsService } from './services/record-ports.service.js';
     RecordPortsService,
     { provide: BUDGET_EXPENSES_UNLINK, useExisting: RecordPortsService },
     { provide: ACCOUNT_RECORDS_CASCADE, useExisting: RecordPortsService },
+    RecordService,
   ],
   exports: [BUDGET_EXPENSES_UNLINK, ACCOUNT_RECORDS_CASCADE],
-  controllers: [ExpenseController, IncomeController],
+  controllers: [ExpenseController, IncomeController, RecordController],
 })
 export class RecordModule {}

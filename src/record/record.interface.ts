@@ -11,3 +11,9 @@ export interface IncomeMutationResult {
   income: IncomeDoc;
   messages: string[];
 }
+
+export interface TransferMutationResult {
+  expense: ExpenseDoc;
+  income: IncomeDoc;
+  messages: string[];
+}
