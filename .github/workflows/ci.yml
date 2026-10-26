@@ -33,6 +33,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
       - run: pnpm run build
+      # Node's own ESM loader (Vitest's interop hides it): a value import of a CJS name, e.g.
+      # `import { Connection } from 'mongoose'`, breaks `node dist/main.js` at link time. Import only, no DB connect.
+      - name: Built app loads under Node ESM
+        run: node --input-type=module -e "await import('./dist/app.module.js')"
+        env:
+          MONGO_URI: mongodb://127.0.0.1:1
+          MONGO_DB_NAME: boot-check
+          NODE_ENV: test
+          JWT_KEY: boot-check-jwt
+          ONE_TIME_JWT_KEY: boot-check-one-time
+          FRONTEND_URI: http://localhost:4100
+          TEST_FRONTEND_URI: http://localhost:4101
+          DOMAIN_URI: http://localhost:4102
       - run: pnpm test
 
       # services: can't pass --replSet, so start a 1-node replica set by hand (transactions need one).

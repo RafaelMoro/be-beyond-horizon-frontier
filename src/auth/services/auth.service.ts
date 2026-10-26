@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
 import { INITIAL_RESPONSE } from '../../constants.js';
+import { RateLimitService } from '../../rate-limit/services/rate-limit.service.js';
 import type { GeneralResponse } from '../../response.interface.js';
 import { UserService } from '../../user/services/user.service.js';
 import { DUMMY_PASSWORD_HASH, LOGIN_ERROR } from '../auth.constants.js';
@@ -14,6 +15,7 @@ export class AuthService {
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
+    private readonly rateLimit: RateLimitService,
   ) {}
 
   async login(
@@ -24,6 +26,8 @@ export class AuthService {
     if (!isFilled(email) || !isFilled(password)) {
       throw new UnauthorizedException();
     }
+    // Before the lookup, so known and unknown emails count the same. Email key only (old-next shares Vercel IPs).
+    await this.rateLimit.consume([{ scope: 'login', value: email }]);
 
     const user = await this.userService.findByEmail(email);
     const ok = await bcrypt.compare(

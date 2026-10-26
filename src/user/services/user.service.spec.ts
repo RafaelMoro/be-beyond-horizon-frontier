@@ -1,9 +1,16 @@
 import { BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { getModelToken } from '@nestjs/mongoose';
+import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
 import bcrypt from 'bcryptjs';
 import { Types } from 'mongoose';
+import { Account } from '../../account/entities/account.entity.js';
+import { BudgetHistory } from '../../budget/entities/budget-history.entity.js';
+import { Budget } from '../../budget/entities/budget.entity.js';
+import { Category } from '../../category/entities/category.entity.js';
 import { INITIAL_RESPONSE } from '../../constants.js';
+import { Expense } from '../../record/entities/expense.entity.js';
+import { Income } from '../../record/entities/income.entity.js';
+import { RateLimitService } from '../../rate-limit/services/rate-limit.service.js';
 import { Test, TestingModule } from '@nestjs/testing';
 import { User } from '../entities/user.entity.js';
 import { FORGOT_PASSWORD_MAILER } from '../user.constants.js';
@@ -24,6 +31,18 @@ describe('UserService', () => {
   };
   const jwtService = { signAsync: vi.fn(), verifyAsync: vi.fn() };
   const mailer = { sendForgotPasswordEmail: vi.fn() };
+  const rateLimit = { consume: vi.fn() };
+  const session = { id: 'fake-session' };
+  const connection = { transaction: vi.fn() };
+  // The cascade's models, in delete order, with their owner field.
+  const owned = [
+    { name: Category.name, field: 'sub' },
+    { name: Account.name, field: 'sub' },
+    { name: Budget.name, field: 'sub' },
+    { name: BudgetHistory.name, field: 'sub' },
+    { name: Expense.name, field: 'userId' },
+    { name: Income.name, field: 'userId' },
+  ].map((m) => ({ ...m, model: { deleteMany: vi.fn() } }));
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -31,8 +50,14 @@ describe('UserService', () => {
       providers: [
         UserService,
         { provide: getModelToken(User.name), useValue: model },
+        { provide: getConnectionToken(), useValue: connection },
+        ...owned.map(({ name, model: m }) => ({
+          provide: getModelToken(name),
+          useValue: m,
+        })),
         { provide: JwtService, useValue: jwtService },
         { provide: FORGOT_PASSWORD_MAILER, useValue: mailer },
+        { provide: RateLimitService, useValue: rateLimit },
       ],
     }).compile();
 
@@ -210,11 +235,22 @@ describe('UserService', () => {
   });
 
   describe('deleteUser', () => {
-    it('400 User not found. when nothing was deleted', async () => {
+    const sub = '507f1f77bcf86cd799439011';
+    beforeEach(() => {
+      connection.transaction.mockImplementation(
+        (fn: (s: typeof session) => unknown) => fn(session),
+      );
+      for (const { model: m } of owned) {
+        m.deleteMany.mockReturnValue(exec({ deletedCount: 1 }));
+      }
+    });
+
+    it('400 User not found. when nothing was deleted, and deletes nothing else', async () => {
       model.findByIdAndDelete.mockReturnValue(exec(null));
-      await expect(
-        service.deleteUser('507f1f77bcf86cd799439011'),
-      ).rejects.toThrow('User not found.');
+      await expect(service.deleteUser(sub)).rejects.toThrow('User not found.');
+      for (const { model: m } of owned) {
+        expect(m.deleteMany).not.toHaveBeenCalled();
+      }
     });
 
     it('returns the legacy body', async () => {
@@ -227,15 +263,40 @@ describe('UserService', () => {
           password: 'h',
         }),
       );
-      await expect(
-        service.deleteUser('507f1f77bcf86cd799439011'),
-      ).resolves.toStrictEqual({
+      await expect(service.deleteUser(sub)).resolves.toStrictEqual({
         ...INITIAL_RESPONSE,
         message: 'User deleted.',
         data: {
           userDeleted: { email: 'a@b.com', firstName: 'A', lastName: 'B' },
         },
       });
+    });
+
+    it('deletes the user, then every owned collection in order, all in the session', async () => {
+      model.findByIdAndDelete.mockReturnValue(exec({ email: 'a@b.com' }));
+      await service.deleteUser(sub);
+      expect(connection.transaction).toHaveBeenCalledTimes(1);
+      expect(model.findByIdAndDelete).toHaveBeenCalledWith(sub, { session });
+      let last = model.findByIdAndDelete.mock.invocationCallOrder[0];
+      for (const { field, model: m } of owned) {
+        expect(m.deleteMany).toHaveBeenCalledExactlyOnceWith(
+          { [field]: sub },
+          { session },
+        );
+        const order = m.deleteMany.mock.invocationCallOrder[0];
+        expect(order).toBeGreaterThan(last);
+        last = order;
+      }
+    });
+
+    it('a failing deleteMany rejects deleteUser (no catch)', async () => {
+      const boom = new Error('boom');
+      model.findByIdAndDelete.mockReturnValue(exec({ email: 'a@b.com' }));
+      owned[4].model.deleteMany.mockReturnValue({
+        exec: vi.fn().mockRejectedValue(boom),
+      });
+      await expect(service.deleteUser(sub)).rejects.toBe(boom);
+      expect(owned[5].model.deleteMany).not.toHaveBeenCalled();
     });
   });
 
@@ -253,7 +314,7 @@ describe('UserService', () => {
     it('unknown email → 201, no write, no send', async () => {
       model.findOne.mockReturnValue(exec(null));
       await expect(
-        service.forgotPassword({ email: 'x@y.com' }),
+        service.forgotPassword({ email: 'x@y.com' }, '::1'),
       ).resolves.toStrictEqual(sent);
       expect(model.updateOne).not.toHaveBeenCalled();
       expect(mailer.sendForgotPasswordEmail).not.toHaveBeenCalled();
@@ -264,7 +325,7 @@ describe('UserService', () => {
       model.updateOne.mockReturnValue(exec({ matchedCount: 1 }));
       jwtService.signAsync.mockResolvedValue('raw.one.time');
       await expect(
-        service.forgotPassword({ email: 'a@b.com' }),
+        service.forgotPassword({ email: 'a@b.com' }, '::1'),
       ).resolves.toStrictEqual(sent);
       expect(jwtService.signAsync).toHaveBeenCalledWith({
         sub: _id.toString(),
@@ -293,9 +354,11 @@ describe('UserService', () => {
         new Promise<void>((r) => (finishSend = r)),
       );
       let settled = false;
-      const res = service.forgotPassword({ email: 'a@b.com' }).finally(() => {
-        settled = true;
-      });
+      const res = service
+        .forgotPassword({ email: 'a@b.com' }, '::1')
+        .finally(() => {
+          settled = true;
+        });
       await vi.waitFor(() =>
         expect(mailer.sendForgotPasswordEmail).toHaveBeenCalled(),
       );
@@ -303,6 +366,38 @@ describe('UserService', () => {
       expect(settled).toBe(false);
       finishSend();
       await expect(res).resolves.toStrictEqual(sent);
+    });
+
+    it('counts the email and the ip before the lookup', async () => {
+      model.findOne.mockReturnValue(exec(null));
+      await service.forgotPassword({ email: 'A@b.com' }, '10.0.0.1');
+      expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith([
+        { scope: 'forgotPasswordEmail', value: 'A@b.com' },
+        { scope: 'forgotPasswordIp', value: '10.0.0.1' },
+      ]);
+      expect(rateLimit.consume.mock.invocationCallOrder[0]).toBeLessThan(
+        model.findOne.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("keys a missing ip as 'unknown'", async () => {
+      model.findOne.mockReturnValue(exec(null));
+      await service.forgotPassword({ email: 'a@b.com' }, undefined);
+      expect(rateLimit.consume.mock.calls[0][0][1]).toStrictEqual({
+        scope: 'forgotPasswordIp',
+        value: 'unknown',
+      });
+    });
+
+    it('a 429 means no lookup, no token write, no mail', async () => {
+      const tooMany = new Error('429');
+      rateLimit.consume.mockRejectedValue(tooMany);
+      await expect(
+        service.forgotPassword({ email: 'a@b.com' }, '::1'),
+      ).rejects.toBe(tooMany);
+      expect(model.findOne).not.toHaveBeenCalled();
+      expect(model.updateOne).not.toHaveBeenCalled();
+      expect(mailer.sendForgotPasswordEmail).not.toHaveBeenCalled();
     });
   });
 

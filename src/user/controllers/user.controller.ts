@@ -7,6 +7,7 @@ import {
   Put,
   Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import type { AuthenticatedRequest } from '../../auth/auth.interface.js';
 import { Public } from '../../auth/decorators/public.decorator.js';
 import {
@@ -39,8 +40,8 @@ export class UserController {
 
   @Public()
   @Post('forgot-password')
-  forgotPassword(@Body() dto: ForgotPasswordDto) {
-    return this.userService.forgotPassword(dto);
+  forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
+    return this.userService.forgotPassword(dto, req.ip);
   }
 
   // The token is in the path: never log the URL (the filters log the route pattern only).

@@ -12,6 +12,7 @@ import { CategoryModule } from './category/category.module.js';
 import { AccountModule } from './account/account.module.js';
 import { BudgetModule } from './budget/budget.module.js';
 import { RecordModule } from './record/record.module.js';
+import { RateLimitModule } from './rate-limit/rate-limit.module.js';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { RecordModule } from './record/record.module.js';
     AccountModule,
     BudgetModule,
     RecordModule,
+    RateLimitModule,
   ],
   controllers: [AppController],
   providers: [AppService],

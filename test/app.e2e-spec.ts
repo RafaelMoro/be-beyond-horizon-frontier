@@ -40,6 +40,54 @@ class ProbeController {
   }
 }
 
+const ORIGIN = 'http://localhost:4100';
+// helmet 8 defaults (research §4).
+const HELMET_HEADERS = [
+  'content-security-policy',
+  'cross-origin-opener-policy',
+  'cross-origin-resource-policy',
+  'origin-agent-cluster',
+  'referrer-policy',
+  'strict-transport-security',
+  'x-content-type-options',
+  'x-dns-prefetch-control',
+  'x-download-options',
+  'x-frame-options',
+  'x-permitted-cross-domain-policies',
+  'x-xss-protection',
+];
+// Header names recorded on the pre-helmet code, minus x-powered-by (AC2 "otherwise unchanged").
+const COMMON = [
+  'access-control-allow-credentials',
+  'connection',
+  'content-length',
+];
+const BASELINE: Record<string, string[]> = {
+  'GET /': [...COMMON, 'content-type', 'date', 'etag', 'vary'],
+  'GET /nope': [...COMMON, 'content-type', 'date', 'etag', 'vary'],
+  'OPTIONS /': [
+    'access-control-allow-credentials',
+    'access-control-allow-headers',
+    'access-control-allow-methods',
+    'access-control-allow-origin',
+    'connection',
+    'content-length',
+    'date',
+    'vary',
+  ],
+  'POST /auth': [
+    'access-control-allow-credentials',
+    'access-control-allow-origin',
+    'connection',
+    'content-length',
+    'content-type',
+    'date',
+    'etag',
+    'set-cookie',
+    'vary',
+  ],
+};
+
 describe('App (e2e)', () => {
   let app: INestApplication<App>;
 
@@ -148,6 +196,74 @@ describe('App (e2e)', () => {
       .set('Access-Control-Request-Method', 'POST')
       .expect(204);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  describe('security headers (helmet)', () => {
+    const http = () => request(app.getHttpServer());
+    const cases: [string, () => Promise<request.Response>][] = [
+      ['GET /', () => http().get('/').expect(200)],
+      ['GET /nope', () => http().get('/nope').expect(404)],
+      [
+        'OPTIONS /',
+        () =>
+          http()
+            .options('/')
+            .set('Origin', ORIGIN)
+            .set('Access-Control-Request-Method', 'POST')
+            .set('Access-Control-Request-Headers', 'authorization,content-type')
+            .expect(204),
+      ],
+      [
+        'POST /auth',
+        async () => {
+          const email = `e2e-app-${Date.now()}@example.invalid`;
+          const password = 'e2e-password';
+          await http()
+            .post('/users')
+            .send({
+              email,
+              password,
+              firstName: 'F',
+              lastName: 'L',
+              middleName: '',
+            })
+            .expect(201);
+          return http()
+            .post('/auth')
+            .set('Origin', ORIGIN)
+            .send({ email, password })
+            .expect(201);
+        },
+      ],
+    ];
+
+    it.each(cases)('%s', async (name, send) => {
+      const res = await send();
+      const names = Object.keys(res.headers).sort();
+      for (const h of HELMET_HEADERS) expect(res.headers).toHaveProperty(h);
+      expect(res.headers).not.toHaveProperty('x-powered-by');
+      expect(names.filter((h) => !HELMET_HEADERS.includes(h))).toStrictEqual(
+        BASELINE[name],
+      );
+      // Pins the default: switching to the cross-origin fallback is a visible change.
+      expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+      if (name === 'GET /') expect(res.text).toBe('Hello World!');
+      if (name === 'POST /auth') {
+        // CORS on the actual (non-preflight) request; accessToken stays the only cookie (D14).
+        expect(res.headers['access-control-allow-origin']).toBe(ORIGIN);
+        expect(res.headers['access-control-allow-credentials']).toBe('true');
+        const cookies = res.headers['set-cookie'] as unknown as string[];
+        expect(cookies).toHaveLength(1);
+        expect(cookies[0]).toMatch(/^accessToken=/);
+        expect(Object.keys(res.body.data.user).sort()).toStrictEqual([
+          '_id',
+          'email',
+          'firstName',
+          'lastName',
+          'middleName',
+        ]);
+      }
+    });
   });
 
   it('parses cookies', async () => {

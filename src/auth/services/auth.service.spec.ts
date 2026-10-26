@@ -1,8 +1,9 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { HttpException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import bcrypt from 'bcryptjs';
 import { Types } from 'mongoose';
+import { RateLimitService } from '../../rate-limit/services/rate-limit.service.js';
 import { UserService } from '../../user/services/user.service.js';
 import { DUMMY_PASSWORD_HASH, LOGIN_ERROR } from '../auth.constants.js';
 import { AuthService } from './auth.service.js';
@@ -16,6 +17,7 @@ describe('AuthService', () => {
   let service: AuthService;
   const userService = { findByEmail: vi.fn() };
   const jwtService = { signAsync: vi.fn() };
+  const rateLimit = { consume: vi.fn() };
   const _id = new Types.ObjectId();
   const user = {
     _id,
@@ -36,6 +38,7 @@ describe('AuthService', () => {
         AuthService,
         { provide: UserService, useValue: userService },
         { provide: JwtService, useValue: jwtService },
+        { provide: RateLimitService, useValue: rateLimit },
       ],
     }).compile();
     service = module.get<AuthService>(AuthService);
@@ -68,6 +71,32 @@ describe('AuthService', () => {
       statusCode: 401,
     });
     expect(userService.findByEmail).not.toHaveBeenCalled();
+    expect(rateLimit.consume).not.toHaveBeenCalled();
+  });
+
+  it('counts the raw email before the lookup', async () => {
+    userService.findByEmail.mockResolvedValue(user);
+    await service
+      .login({ email: ' A@b.com', password: 'wrong' })
+      .catch(() => {});
+    expect(rateLimit.consume).toHaveBeenCalledExactlyOnceWith([
+      { scope: 'login', value: ' A@b.com' },
+    ]);
+    expect(rateLimit.consume.mock.invocationCallOrder[0]).toBeLessThan(
+      userService.findByEmail.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('a 429 from consume propagates with no lookup, bcrypt or sign', async () => {
+    const tooMany = new HttpException('Too Many Requests', 429);
+    rateLimit.consume.mockRejectedValue(tooMany);
+    const compare = vi.spyOn(bcrypt, 'compare');
+    await expect(
+      service.login({ email: user.email, password: LEGACY_PASSWORD }),
+    ).rejects.toBe(tooMany);
+    expect(userService.findByEmail).not.toHaveBeenCalled();
+    expect(compare).not.toHaveBeenCalled();
+    expect(jwtService.signAsync).not.toHaveBeenCalled();
   });
 
   it('unknown email still runs bcrypt against the dummy hash, then 401 LOGIN_ERROR', async () => {

@@ -1,9 +1,16 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import bcrypt from 'bcryptjs';
-import { isValidObjectId, Model } from 'mongoose';
+import { type Connection, isValidObjectId, Model } from 'mongoose';
+import { Account } from '../../account/entities/account.entity.js';
+import { BudgetHistory } from '../../budget/entities/budget-history.entity.js';
+import { Budget } from '../../budget/entities/budget.entity.js';
+import { Category } from '../../category/entities/category.entity.js';
 import { INITIAL_RESPONSE } from '../../constants.js';
+import { Expense } from '../../record/entities/expense.entity.js';
+import { Income } from '../../record/entities/income.entity.js';
+import { RateLimitService } from '../../rate-limit/services/rate-limit.service.js';
 import type { GeneralResponse } from '../../response.interface.js';
 import {
   UserCreatedDto,
@@ -45,10 +52,19 @@ const JWT_ERROR_NAMES = new Set([
 export class UserService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectConnection() private readonly connection: Connection,
+    @InjectModel(Category.name) private readonly categoryModel: Model<Category>,
+    @InjectModel(Account.name) private readonly accountModel: Model<Account>,
+    @InjectModel(Budget.name) private readonly budgetModel: Model<Budget>,
+    @InjectModel(BudgetHistory.name)
+    private readonly budgetHistoryModel: Model<BudgetHistory>,
+    @InjectModel(Expense.name) private readonly expenseModel: Model<Expense>,
+    @InjectModel(Income.name) private readonly incomeModel: Model<Income>,
     // UserModule's own JwtModule: the one-time reset key, not the access key.
     private readonly jwtService: JwtService,
     @Inject(FORGOT_PASSWORD_MAILER)
     private readonly mailer: ForgotPasswordMailer,
+    private readonly rateLimit: RateLimitService,
   ) {}
 
   // Exact case: emails are not lower-cased (legacy).
@@ -121,25 +137,44 @@ export class UserService {
     };
   }
 
-  // No cascade to the user's other collections yet (D7, lands in S8).
-  async deleteUser(sub: string): Promise<GeneralResponse> {
-    // `sub` comes from the guard, which already proved it is a valid, existing id.
-    const deleted = await this.userModel.findByIdAndDelete(sub).exec();
-    if (!deleted) throw new BadRequestException(USER_NOT_FOUND_ERROR);
-    const userDeleted: UserDeletedDto = {
-      email: deleted.email,
-      firstName: deleted.firstName,
-      lastName: deleted.lastName,
-    };
-    return {
-      ...INITIAL_RESPONSE,
-      message: DELETE_USER_MESSAGE,
-      data: { userDeleted },
-    };
+  // Cascade in one transaction (D7); a write racing in mid-delete may survive it (accepted, E8.Q2).
+  deleteUser(sub: string): Promise<GeneralResponse> {
+    return this.connection.transaction(async (session) => {
+      // `sub` comes from the guard; re-checked here so a concurrent delete aborts before any other write.
+      const deleted = await this.userModel
+        .findByIdAndDelete(sub, { session })
+        .exec();
+      if (!deleted) throw new BadRequestException(USER_NOT_FOUND_ERROR);
+      // Owner fields are strings in prod (research §3). Sequential: one session can't run ops in parallel.
+      await this.categoryModel.deleteMany({ sub }, { session }).exec();
+      await this.accountModel.deleteMany({ sub }, { session }).exec();
+      await this.budgetModel.deleteMany({ sub }, { session }).exec();
+      await this.budgetHistoryModel.deleteMany({ sub }, { session }).exec();
+      await this.expenseModel.deleteMany({ userId: sub }, { session }).exec();
+      await this.incomeModel.deleteMany({ userId: sub }, { session }).exec();
+      const userDeleted: UserDeletedDto = {
+        email: deleted.email,
+        firstName: deleted.firstName,
+        lastName: deleted.lastName,
+      };
+      return {
+        ...INITIAL_RESPONSE,
+        message: DELETE_USER_MESSAGE,
+        data: { userDeleted },
+      };
+    });
   }
 
   // Always 201: an unknown email must not be distinguishable (no write, no send).
-  async forgotPassword({ email }: ForgotPasswordDto): Promise<GeneralResponse> {
+  // `ip` is the socket address until S9 sets `trust proxy` (X-Forwarded-For is ignored until then).
+  async forgotPassword(
+    { email }: ForgotPasswordDto,
+    ip: string | undefined,
+  ): Promise<GeneralResponse> {
+    await this.rateLimit.consume([
+      { scope: 'forgotPasswordEmail', value: email },
+      { scope: 'forgotPasswordIp', value: ip ?? 'unknown' },
+    ]);
     const user = await this.findByEmail(email);
     if (user) {
       const oneTimeToken = await this.jwtService.signAsync({
