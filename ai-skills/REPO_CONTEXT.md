@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port) and S7c records-transfers-listing (`POST /records/transfer`: both sides, both balances and the income side's paid flags in one transaction; `GET /records/expenses-and-incomes` merged monthly listing; no transfer edit/delete route, each side goes through its own route, D9).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port) and S7c records-transfers-listing (`POST /records/transfer`: both sides, both balances and the income side's paid flags in one transaction; `GET /records/expenses-and-incomes` merged monthly listing; no transfer edit/delete route, each side goes through its own route, D9) and S8a hardening-code (`DELETE /users` cascades to every owned collection in one transaction, helmet defaults, Mongo-backed rate limits on login and forgot-password: `rate-limit` module).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -17,6 +17,7 @@ _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling c
 - NestJS 12 (`@nestjs/core` 12.2), Express platform (`@nestjs/platform-express`)
 - `@nestjs/config` 12 + Joi 18 (env validation), `@nestjs/mongoose` 12 + mongoose 9, class-validator / class-transformer, cookie-parser
 - `@nestjs/jwt` 12 (jsonwebtoken, HS256), `bcryptjs` 3 (cost 10). No passport.
+- `helmet` 8 (defaults). No `@nestjs/throttler`: rate limits are the own `rate-limit` module.
 - `resend` 6 (mail), `@react-email/components` 1 + `react` 19 (templates rendered to HTML), all exact-pinned (the template snapshot depends on the renderer)
 - TypeScript 6, ESM (`"type": "module"`, `module`/`moduleResolution: nodenext`, `strict: true`, `jsx: react-jsx` for the `.tsx` mail templates under `src/mail/templates`)
 - pnpm (`pnpm-lock.yaml`; CI pins pnpm 10, Node 22)
@@ -28,7 +29,7 @@ _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling c
 ```
 src/
 ├── main.ts                 # bootstrap: configureApp + enableShutdownHooks; listens on process.env.PORT ?? 3000
-├── configure-app.ts        # configureApp(app): cookie-parser, ValidationPipe, filters, CORS (shared with e2e)
+├── configure-app.ts        # configureApp(app): helmet (first, defaults), cookie-parser, ValidationPipe, filters, CORS (shared with e2e)
 ├── app.module.ts           # root module: ConfigModule + MongooseModule.forRootAsync, AppController + AppService
 ├── config.ts               # envSchema (Joi), buildMongoUri, registerAs('config') typed config
 ├── mongoose-options.ts     # mongooseOptions factory + assertTestMongoUri (prod-DB guard)
@@ -39,22 +40,22 @@ src/
 │   └── catch-all.filter.ts       # CatchAllExceptionFilter (@Catch())
 ├── app.controller.ts       # GET / (@Public)
 ├── auth/
-│   ├── auth.module.ts      # JwtModule (JWT_KEY, 5d) + APP_GUARD JwtAuthGuard; imports UserModule
+│   ├── auth.module.ts      # JwtModule (JWT_KEY, 5d) + APP_GUARD JwtAuthGuard; imports UserModule, RateLimitModule
 │   ├── auth.constants.ts   # cookie name/max-age, IS_PUBLIC_KEY, LOGIN_ERROR, DUMMY_PASSWORD_HASH
 │   ├── auth.interface.ts   # JwtPayload, AuthenticatedRequest, LoginBody (interface on purpose)
 │   ├── auth.utils.ts       # extractToken: accessToken cookie first, else Authorization: Bearer
 │   ├── decorators/public.decorator.ts
 │   ├── guards/jwt-auth.guard.ts (+ .spec)
-│   ├── services/auth.service.ts (+ .spec)   # login
+│   ├── services/auth.service.ts (+ .spec)   # login (rate-limited per email, after the missing-field check)
 │   └── controllers/auth.controller.ts       # POST /auth, sets the cookie
 ├── user/
-│   ├── user.module.ts      # forFeature(User), JwtModule (ONE_TIME_JWT_KEY, 1d); imports MailModule (FORGOT_PASSWORD_MAILER)
+│   ├── user.module.ts      # forFeature(User + the six owned schemas, only for the delete cascade: importing their modules would be a cycle), JwtModule (ONE_TIME_JWT_KEY, 1d); imports MailModule (FORGOT_PASSWORD_MAILER), RateLimitModule
 │   ├── user.constants.ts   # legacy texts, BCRYPT_COST, FORGOT_PASSWORD_MAILER token
 │   ├── user.interface.ts   # ForgotPasswordMail / ForgotPasswordMailer (mail port, implemented by mail/)
 │   ├── user.utils.ts       # hashToken (sha256 hex)
 │   ├── entities/user.entity.ts       # collection `users`
 │   ├── dtos/user.dto.ts, user-responses.dto.ts
-│   ├── services/user.service.ts (+ .spec)
+│   ├── services/user.service.ts (+ .spec)   # deleteUser cascade (transaction), forgotPassword (rate-limited per email + IP)
 │   └── controllers/user.controller.ts       # /users routes
 ├── mail/
 │   ├── mail.module.ts      # MailService + FORGOT_PASSWORD_MAILER (useExisting: MailService), exports the token
@@ -102,6 +103,11 @@ src/
 │   ├── controllers/expense.controller.ts           # /expenses-actions routes
 │   ├── controllers/income.controller.ts            # /incomes-actions routes
 │   └── controllers/record.controller.ts            # /records routes
+├── rate-limit/
+│   ├── rate-limit.module.ts    # forFeature(RateLimit); exports RateLimitService; imported by AuthModule and UserModule
+│   ├── rate-limit.constants.ts # RATE_LIMITS (login 10/15 min, forgotPasswordEmail 3/h, forgotPasswordIp 10/h), TOO_MANY_REQUESTS
+│   ├── entities/rate-limit.entity.ts   # collection `ratelimits`: _id `scope:sha256(trim+lowercase value):bucket`, count, expiresAt (TTL index)
+│   └── services/rate-limit.service.ts (+ .spec)  # consume(hits): $inc upsert per key (fixed window), 429 if any key is over
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -115,7 +121,9 @@ test/
 ├── budgets.e2e-spec.ts
 ├── records-expenses.e2e-spec.ts
 ├── records-incomes.e2e-spec.ts
-└── records-transfers.e2e-spec.ts
+├── records-transfers.e2e-spec.ts
+├── user-delete.e2e-spec.ts
+└── rate-limit.e2e-spec.ts
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -123,7 +131,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`, interceptors, a custom logger, request ids, `/health`, `trust proxy` (S9), the prod index/TTL script and orphan clean-up (S8b), OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
@@ -138,6 +146,7 @@ Does **not** exist yet — don't assume it: authorization/roles, logout or `/me`
 - Connection in `AppModule`: `MongooseModule.forRootAsync({ inject: [config.KEY], useFactory: mongooseOptions })`. No separate `DatabaseModule` (`MongooseCoreModule` is global).
 - `mongooseOptions`: `serverSelectionTimeoutMS: 5000`, `retryAttempts` 0 under test / 2 otherwise, `retryDelay: 1000`, `autoIndex` only when `NODE_ENV=test` (prod indexes come from S8's script).
 - Multi-document writes use `connection.transaction` (no custom wrapper; rules in `IMPLEMENTATION_GUIDELINES.md` → Database → Transactions). First use: `createLocalCategories`.
+- `ratelimits`: one doc per key and fixed window (`_id` = `scope:sha256(trim+lowercase value):bucket`, `count`, `expiresAt` = window end); no email or IP in clear. Correctness doesn't depend on the TTL index `{ expiresAt: 1 }, expireAfterSeconds: 0` (built only under test until S8b's script). In prod the collection appears on the first login from `start:dev` (D16).
 - Prod-DB guard: whenever `VITEST` is set or `NODE_ENV=test`, `assertTestMongoUri` requires `mongodb://` and every host in `localhost` / `127.0.0.1` / `[::1]`.
 
 ## Response envelope
@@ -174,11 +183,11 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | Controller       | Route                                      | Guard  | Purpose |
 | ---------------- | ------------------------------------------ | ------ | ------- |
 | `AppController`  | `GET /`                                    | public | Starter route, returns `Hello World!` (`text/html`, no envelope) |
-| `AuthController` | `POST /auth`                               | public | Login. Raw body `{email, password}` (no DTO); 201 `data.user`; `accessToken` cookie (bare JWT, first and only `Set-Cookie`, `HttpOnly; Secure; SameSite=Strict`, 5d). Bad creds 401 `'Email or Password incorrect.'`, missing 401 `'Unauthorized'` |
+| `AuthController` | `POST /auth`                               | public | Login. Raw body `{email, password}` (no DTO); 201 `data.user`; `accessToken` cookie (bare JWT, first and only `Set-Cookie`, `HttpOnly; Secure; SameSite=Strict`, 5d). Bad creds 401 `'Email or Password incorrect.'`, missing 401 `'Unauthorized'` (not counted). Over 10 attempts / 15 min per email (trim + lowercase, every attempt counted, known = unknown) → 429 `'Too Many Requests'` in the envelope, no cookie, no `Retry-After` / `X-RateLimit-*` |
 | `UserController` | `POST /users`                              | public | Signup, 201 `'User created'` `data.userCreated {email, sub}`; dup 400 `'Try with other email.'` |
 | `UserController` | `PUT /users`                               | JWT    | Profile names; `email` required and equal to the stored one; `password` → 400 |
-| `UserController` | `DELETE /users`                            | JWT    | Deletes the user (no cascade until S8) |
-| `UserController` | `POST /users/forgot-password`              | public | Always 201 `'Email Sent'`; stores sha256 of a one-time JWT, raw token only to the mailer port. Known email: awaits the Resend send (5 s timeout) of `${FRONTEND_URI}/reset-password/<token>`; a failed send is logged (`error.name`/`statusCode` only) and still 201 |
+| `UserController` | `DELETE /users`                            | JWT    | Deletes the user and their categories, accounts, budgets, budget histories, expenses and incomes in one transaction; 200 `'User deleted.'` `data.userDeleted {email, firstName, lastName}` |
+| `UserController` | `POST /users/forgot-password`              | public | Always 201 `'Email Sent'`; stores sha256 of a one-time JWT, raw token only to the mailer port. Known email: awaits the Resend send (5 s timeout) of `${FRONTEND_URI}/reset-password/<token>`; a failed send is logged (`error.name`/`statusCode` only) and still 201. Counted after the DTO pipe: over 3 / h per email or 10 / h per IP (`req.ip`) → 429 `'Too Many Requests'` (no lookup, no send) |
 | `UserController` | `POST /users/reset-password/:oneTimeToken` | public | 201 `'Reset Password Successfully'`; jsonwebtoken errors → 400 with their message; sets `passwordChangedAt` |
 | `CategoryController` | `GET /categories`                      | JWT    | 200 `data.categories` (the user's docs without `sub`; `message: null`) |
 | `CategoryController` | `POST /categories`                     | JWT    | Body `{categoryName, subCategories, icon}`; 201 `'New category created'` `data.category` (incl. `sub`, `__v`) |
@@ -243,7 +252,7 @@ The unique `{ budget: 1, sub: 1 }` and `{ sub: 1 }` budget indexes build only un
 
 - PRs target `main` (no `develop`). Feature branches are named `feat/<topic>`.
 - `check-label.yml`: every PR needs a `major`, `minor` or `patch` label.
-- `ci.yml`: on PRs to and pushes to `main` — job `verify`: `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, `pnpm test`, then a `mongo:8` replica set via `docker run --replSet rs0` and `pnpm run test:e2e` with `MONGO_TEST_URI`. Job `secrets` (parallel): gitleaks (`ghcr.io/gitleaks/gitleaks:v8.30.1`) over the full git history with `--redact`.
+- `ci.yml`: on PRs to and pushes to `main` — job `verify`: `pnpm install --frozen-lockfile`, `pnpm run lint`, `pnpm run build`, a Node-ESM import of `dist/app.module.js` with a dummy env (catches CJS named value imports like `{ Connection } from 'mongoose'` that only break `node dist/main.js`; import types with `type`), `pnpm test`, then a `mongo:8` replica set via `docker run --replSet rs0` and `pnpm run test:e2e` with `MONGO_TEST_URI`. Job `secrets` (parallel): gitleaks (`ghcr.io/gitleaks/gitleaks:v8.30.1`) over the full git history with `--redact`.
 - `update-changelog.yml`: on merge to `main`, bumps `package.json` version per the label (highest wins), prepends the PR to `CHANGELOG.md`, commits `chore(release): vX.Y.Z (<bump>)`, tags `vX.Y.Z` and pushes.
 
 ## Adding New Modules
@@ -277,3 +286,5 @@ Relative imports end in `.js` (`import { AppService } from './app.service.js';`)
 - `.env.example` documents every key; `.env` is gitignored.
 - `package.json` has a `deploy` script (`nest deploy`, with `@nestjs/mau` installed), but there is no deployment config or deploy workflow in the repo. _(planned)_ deployment target is not decided here; check the external plan.
 - `dist/` and `*.tsbuildinfo` are build output (gitignored).
+- **S9** must set Express `trust proxy` (API Gateway's hop only); until then `req.ip` is the socket address and, deployed, every forgot-password call shares one IP bucket.
+- helmet runs with defaults; if old-next breaks on CORP, the agreed fallback is `crossOriginResourcePolicy: { policy: 'cross-origin' }`.
