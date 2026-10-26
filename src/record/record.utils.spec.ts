@@ -2,6 +2,7 @@ import {
   formatDateToString,
   formatNumberToCurrency,
   getMonthBounds,
+  toExpenseIds,
   toMexicoCityWallClock,
 } from './record.utils.js';
 
@@ -99,5 +100,32 @@ describe('record.utils', () => {
     ])('null for %s/%s', (month, year) => {
       expect(getMonthBounds(month, year)).toBeNull();
     });
+  });
+});
+
+describe('toExpenseIds', () => {
+  const A = '64b7f0c2a1b2c3d4e5f60801';
+  const B = '64b7f0c2a1b2c3d4e5f60802';
+
+  it('accepts id strings, expense objects and a mix; dedupes in input order', () => {
+    expect(toExpenseIds([])).toStrictEqual([]);
+    expect(toExpenseIds([A, B])).toStrictEqual([A, B]);
+    expect(toExpenseIds([{ _id: B, shortName: 'x' }, A])).toStrictEqual([B, A]);
+    expect(toExpenseIds([A, { _id: A }, A.toUpperCase(), B])).toStrictEqual([
+      A,
+      B,
+    ]);
+  });
+
+  it.each([
+    ['null', null],
+    ['a number', 42],
+    ['{}', {}],
+    ['{ _id: 5 }', { _id: 5 }],
+    ['an operator object', { _id: { $ne: null } }],
+    ['a 12-char string', 'abcdefghijkl'],
+    ['an array', [A]],
+  ])('null on %s', (_, bad) => {
+    expect(toExpenseIds([A, bad])).toBeNull();
   });
 });

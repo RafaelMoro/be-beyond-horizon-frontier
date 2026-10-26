@@ -2,12 +2,18 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { ClientSession } from 'mongoose';
 import { Expense } from '../entities/expense.entity.js';
+import { Income } from '../entities/income.entity.js';
 import { RecordPortsService } from './record-ports.service.js';
 
 describe('RecordPortsService', () => {
   let service: RecordPortsService;
   const exec = vi.fn();
-  const model = { updateMany: vi.fn(() => ({ exec })) };
+  const incomeExec = vi.fn();
+  const model = {
+    updateMany: vi.fn(() => ({ exec })),
+    deleteMany: vi.fn(() => ({ exec })),
+  };
+  const incomeModel = { deleteMany: vi.fn(() => ({ exec: incomeExec })) };
   const session = { id: 'fake-session' } as unknown as ClientSession;
 
   beforeEach(async () => {
@@ -16,6 +22,7 @@ describe('RecordPortsService', () => {
       providers: [
         RecordPortsService,
         { provide: getModelToken(Expense.name), useValue: model },
+        { provide: getModelToken(Income.name), useValue: incomeModel },
       ],
     }).compile();
     service = module.get(RecordPortsService);
@@ -29,5 +36,20 @@ describe('RecordPortsService', () => {
       { session },
     );
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("deleteAccountRecords deletes the owner's expenses and incomes on that account and maps the counts", async () => {
+    exec.mockResolvedValue({ deletedCount: 2 });
+    incomeExec.mockResolvedValue({ deletedCount: 1 });
+    expect(
+      await service.deleteAccountRecords({
+        accountId: 'a1',
+        sub: 'u1',
+        session,
+      }),
+    ).toStrictEqual({ numberExpensesDeleted: 2, numberIncomesDeleted: 1 });
+    const filter = { userId: 'u1', account: 'a1' };
+    expect(model.deleteMany).toHaveBeenCalledWith(filter, { session });
+    expect(incomeModel.deleteMany).toHaveBeenCalledWith(filter, { session });
   });
 });

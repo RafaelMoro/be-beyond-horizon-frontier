@@ -8,7 +8,7 @@ Architecture and conventions for the be-beyond-horizon-frontier NestJS backend.
 
 ## Overview
 
-Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port).
+Backend for Budget Master. Today it has the S1 foundation (config, Mongo connection, response envelope, global error filters, validation, CORS, cookies, e2e harness), `GET /` returning `Hello World!`, S2 auth + users (`user` and `auth` modules: signup, login cookie, global JWT guard, profile update/delete, forgot/reset password), S3 mail (`mail` module: the forgot-password email via Resend), S4 categories (`category` module: per-user categories, owner-filtered update/delete, default seeding in a transaction) and S5 accounts (`account` module: `/account-actions` CRUD, owner-bound writes, delete in a transaction behind a records-cascade port, balance helpers for S7) and S6 budgets (`budget` module: `/budgets` and `/budget-history`, create/delete with the history doc in one transaction, a `linkedBudgets` unlink port, amount/record helpers for S7) and S7a records-expenses (`record` module: `/expenses-actions` create/edit/delete with balance and linked-budget effects in one transaction each, the monthly expenses listing, and the real `BUDGET_EXPENSES_UNLINK` port) and S7b records-incomes (`/incomes-actions` create/edit/delete with balance and owner-filtered `expensesPaid` paid-flag effects in one transaction each, and the real `ACCOUNT_RECORDS_CASCADE` port).
 
 _(planned)_ It is the rewrite of the legacy backend `be-budgt-master` (sibling checkout `../be-budgt-master`) (MongoDB/mongoose, JWT cookie auth, AWS Lambda). The existing frontend's HTTP contract must keep working — no breaking API changes. The plan and progress live outside this repo, in `~/projects/notes/budget-master/be-refactor.md` (local notes, not in this repo).
 
@@ -69,7 +69,7 @@ src/
 │   ├── services/category.service.ts (+ .spec)  # CRUD by owner, createLocalCategories (transaction), assertCategoryOwned (S7)
 │   └── controllers/category.controller.ts      # /categories routes
 ├── account/
-│   ├── account.module.ts   # forFeature(Account); ACCOUNT_RECORDS_CASCADE default (0/0 useValue); exports AccountService
+│   ├── account.module.ts   # forFeature(Account); exports AccountService (ACCOUNT_RECORDS_CASCADE comes from the global RecordModule)
 │   ├── account.constants.ts # legacy texts, CARD_PROVIDERS, TERMINATION_DIGITS_REGEX, ACCOUNT_RECORDS_CASCADE token
 │   ├── account.interface.ts # AccountRecordsCascade (records-cascade port, implemented by S7)
 │   ├── entities/account.entity.ts    # collection `accounts`, `sub` is a string, index { sub: 1 }; alias/card fields optional (D17)
@@ -87,16 +87,19 @@ src/
 │   ├── services/budget-history.service.ts (+ .spec)  # history CRUD, owner check on POST, addHistoryRecord / removeHistoryRecord (S7)
 │   └── controllers/budget.controller.ts, controllers/budget-history.controller.ts  # /budgets, /budget-history
 ├── record/
-│   ├── record.module.ts    # @Global; forFeature(Expense); imports Account/Budget/CategoryModule; provides + exports BUDGET_EXPENSES_UNLINK (useExisting: RecordPortsService)
-│   ├── record.constants.ts # legacy texts, MAX_LINKED_BUDGETS, months/weekdays, CATEGORY_POPULATE
-│   ├── record.interface.ts # ExpenseMutationResult
-│   ├── record.utils.ts (+ .spec)  # toMexicoCityWallClock (Intl, TZ-independent), formatDateToString, formatNumberToCurrency, getMonthBounds
+│   ├── record.module.ts    # @Global; forFeature(Expense, Income); imports Account/Budget/CategoryModule; provides + exports BUDGET_EXPENSES_UNLINK and ACCOUNT_RECORDS_CASCADE (both useExisting: RecordPortsService)
+│   ├── record.constants.ts # legacy texts (expenses, incomes), RECORD_UPDATABLE_FIELDS (shared PUT $set list), MAX_LINKED_BUDGETS, months/weekdays, CATEGORY_POPULATE, EXPENSES_PAID_POPULATE
+│   ├── record.interface.ts # ExpenseMutationResult, IncomeMutationResult
+│   ├── record.utils.ts (+ .spec)  # toMexicoCityWallClock (Intl, TZ-independent), formatDateToString, formatNumberToCurrency, getMonthBounds, toExpenseIds (expensesPaid ids/objects → deduped ids, null on anything else)
 │   ├── entities/record.entity.ts   # AccountRecord base (no schema): category Mixed + ref, account String, indebtedPeople subdocs
 │   ├── entities/expense.entity.ts  # collection `createexpenses`, isPaid, linkedBudgets ObjectId[] (no default); index { userId, account, date: -1 }
-│   ├── dtos/record.dto.ts, dtos/expense.dto.ts
+│   ├── entities/income.entity.ts   # collection `createincomes`, expensesPaid ObjectId[] (ref Expense), no isPaid; same index
+│   ├── dtos/record.dto.ts, dtos/expense.dto.ts, dtos/income.dto.ts
 │   ├── services/expense.service.ts (+ .spec)       # listing, create/update/delete in transactions, budget add/remove helpers
-│   ├── services/record-ports.service.ts (+ .spec)  # BUDGET_EXPENSES_UNLINK impl; depends only on record models (no cycle)
-│   └── controllers/expense.controller.ts           # /expenses-actions routes
+│   ├── services/income.service.ts (+ .spec)        # create/update/delete in transactions, owner-filtered paid-flag helpers
+│   ├── services/record-ports.service.ts (+ .spec)  # BUDGET_EXPENSES_UNLINK + ACCOUNT_RECORDS_CASCADE impls; depends only on record models (no cycle)
+│   ├── controllers/expense.controller.ts           # /expenses-actions routes
+│   └── controllers/income.controller.ts            # /incomes-actions routes
 ├── app.controller.spec.ts
 └── app.service.ts
 test/
@@ -108,7 +111,8 @@ test/
 ├── categories.e2e-spec.ts
 ├── accounts.e2e-spec.ts
 ├── budgets.e2e-spec.ts
-└── records-expenses.e2e-spec.ts
+├── records-expenses.e2e-spec.ts
+└── records-incomes.e2e-spec.ts
 .env.example                # every S1 key, documented
 .gitleaksignore             # known gitleaks false positives (by fingerprint)
 vitest.config.ts            # unit: **/*.spec.ts
@@ -116,7 +120,7 @@ vitest.config.e2e.ts        # e2e: **/*.e2e-spec.ts, globalSetup + setupFiles, n
 oxlint.json                 # no-explicit-any off, no-floating-promises warn
 ```
 
-Does **not** exist yet — don't assume it: incomes (`/incomes-actions`), transfers and the `/records` listing (S7b/S7c), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
+Does **not** exist yet — don't assume it: transfers and the `/records` listing (S7c), authorization/roles, logout or `/me`, the user-delete cascade (S8), rate limiting, interceptors, a custom logger, request ids, helmet, `/health`, OpenAPI docs, path aliases (`tsconfig.json` has no `paths`).
 
 ## Config
 
@@ -181,7 +185,7 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | `AccountController` | `GET /account-actions`                 | JWT    | 200 `data.accounts` (the user's full docs incl. `sub`, `__v`; `message: null`) |
 | `AccountController` | `POST /account-actions`                | JWT    | Body `{title, alias, accountType, amount, backgroundColor, color, accountProvider?, terminationFourDigits?}`; 201 `'Account created'` `data.account`. Bad digits → 400 `'Termination digits must be a 4-digit number (digits only).'` (checked first), bad provider → 400 `'Invalid account provider'` |
 | `AccountController` | `PUT /account-actions`                 | JWT    | Body `{accountId, …any create field}`; 200 `'Account Updated'` `data.account`. Missing → 400 `'Account not found'`, foreign → **400** `'Account does not belong to the user'` (both before the card checks) |
-| `AccountController` | `DELETE /account-actions`              | JWT    | Body `{accountId}`; 200 `'Account Deleted'` `data { accountDeleted, numberExpensesDeleted, numberIncomesDeleted }`. Missing → 400 `'Account not found'`, foreign → **401** `'Account does not belong to the user'`. Runs in a transaction; records cascade via the `ACCOUNT_RECORDS_CASCADE` port (default 0/0 until S7 provides it) |
+| `AccountController` | `DELETE /account-actions`              | JWT    | Body `{accountId}`; 200 `'Account Deleted'` `data { accountDeleted, numberExpensesDeleted, numberIncomesDeleted }`. Missing → 400 `'Account not found'`, foreign → **401** `'Account does not belong to the user'`. Runs in a transaction; records cascade via the `ACCOUNT_RECORDS_CASCADE` port: deletes the owner's expenses and incomes on that account string, real counts |
 | `BudgetController` | `POST /budgets`                        | JWT    | Body: all 11 fields `{name, description, typeBudget, startDate, endDate, currentAmount, limit, period, isActive, nextResetDate, previousPeriods}`; 201 `'New budget created'` `data { budget, budgetHistory }` (both incl. `sub`; history `records: []`). One transaction |
 | `BudgetController` | `GET /budgets`                         | JWT    | 200 `data.budgets` (without `sub`). Empty → **200** `message: 'Budgets not found'`, `data: null` |
 | `BudgetController` | `GET /budgets/:budgetId`               | JWT    | 200 `data.budget` (incl. `sub`). Missing/foreign → **200** `'Budget not found'`, `data: null`; non-ObjectId → 400 `'Invalid _id'` |
@@ -199,8 +203,11 @@ Every route goes through the global `JwtAuthGuard` unless marked `@Public()`.
 | `ExpenseController` | `POST /expenses-actions`                | JWT    | Create; 201 `message: string[]`, `data.expense` (category + linkedBudgets populated). Date stored as Mexico City wall clock. 400 transfer+budgets / `'Invalid type of record'` / max 3 budgets; category 404; account 404/401; missing/foreign budget 400 `'Budget history not found'`. One transaction: balance `−amount`, each budget `+amount` + history entry |
 | `ExpenseController` | `PUT /expenses-actions`                 | JWT    | Body `{recordId, …}`; 200 `data.expense` (only category populated). 400 missing date/category/amount(0)/linkedBudgets; 404 `'Expense not found.'`; 401 `'This expense does not belongs to the user'`. Q9: category/account/added budgets checked only when changed. Balance and budgets per research §5.1/§5.2 (bug 8 fixed); a stored foreign account + amount/account change → 404 |
 | `ExpenseController` | `DELETE /expenses-actions`              | JWT    | Body `{recordId}`; 200 raw deleted doc. 404/401 as PUT; missing/foreign account → 404, record kept (Q10); stale budget links skipped |
+| `IncomeController` | `POST /incomes-actions`                 | JWT    | Create; 201 `message: string[]`, `data.income` unpopulated. Date stored as Mexico City wall clock. 400 `'Invalid type of record'` (not `income`), malformed `expensesPaid` element → 400 `INVALID_EXPENSES_PAID` (before any write); category 404; account 404/401. `expensesPaid` takes ids or expense objects; only the caller's existing expenses are stored and set `isPaid: true` (others counted as failed). One transaction: balance `+amount` |
+| `IncomeController` | `PUT /incomes-actions`                  | JWT    | Body `{recordId, …, expensesPaid?}`; 200 `data.income` (`expensesPaid` → `_id shortName amountFormatted fullDate formattedTime`, category populated). 400 missing date/category/amount(0); 404 `'Expense not found.'` (sic); 401 `"You're unauthorized to see these incomes."`. Q9 ownership checks only on change; balance `+new − old`, account move `−old`/`+new`. With `expensesPaid`: removed unpaid, added paid, kept untouched (bug 7); without it nothing changes (Q8) |
+| `IncomeController` | `DELETE /incomes-actions`               | JWT    | Body `{recordId}`; 200 raw deleted doc. 404 `'Income not found.'`, 401 `'This income does not belongs to the user'`; missing/foreign account → 404, income kept (Q10). Balance `−amount`, the owner's stored `expensesPaid` set `isPaid: false` |
 
-`BUDGET_EXPENSES_UNLINK` is provided by the global `RecordModule` (`$pull` from the owner's expenses in the budget-delete transaction); `ACCOUNT_RECORDS_CASCADE` is still the 0/0 default in `AccountModule` until S7b.
+`BUDGET_EXPENSES_UNLINK` is provided by the global `RecordModule` (`$pull` from the owner's expenses in the budget-delete transaction); `ACCOUNT_RECORDS_CASCADE` is provided by the same module (`deleteMany` of the owner's expenses and incomes on that account, in the account-delete transaction; no paid-flag or transfer-counterpart effects).
 
 The unique `{ budget: 1, sub: 1 }` and `{ sub: 1 }` budget indexes build only under test (`autoIndex`); prod gets them from S8's script, so until then a duplicate history POST on prod creates a second doc.
 

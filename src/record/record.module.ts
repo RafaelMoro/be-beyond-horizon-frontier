@@ -1,29 +1,39 @@
 import { Global, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { ACCOUNT_RECORDS_CASCADE } from '../account/account.constants.js';
 import { AccountModule } from '../account/account.module.js';
 import { BUDGET_EXPENSES_UNLINK } from '../budget/budget.constants.js';
 import { BudgetModule } from '../budget/budget.module.js';
 import { CategoryModule } from '../category/category.module.js';
 import { ExpenseController } from './controllers/expense.controller.js';
+import { IncomeController } from './controllers/income.controller.js';
 import { Expense, ExpenseSchema } from './entities/expense.entity.js';
+import { Income, IncomeSchema } from './entities/income.entity.js';
 import { ExpenseService } from './services/expense.service.js';
+import { IncomeService } from './services/income.service.js';
 import { RecordPortsService } from './services/record-ports.service.js';
 
-// Global so BudgetModule resolves the port without importing this module (E7.Q2; this module imports BudgetModule).
+// Global so AccountModule and BudgetModule resolve their ports without importing this module (E7.Q2; this module
+// imports both).
 @Global()
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Expense.name, schema: ExpenseSchema }]),
+    MongooseModule.forFeature([
+      { name: Expense.name, schema: ExpenseSchema },
+      { name: Income.name, schema: IncomeSchema },
+    ]),
     AccountModule,
     BudgetModule,
     CategoryModule,
   ],
   providers: [
     ExpenseService,
+    IncomeService,
     RecordPortsService,
     { provide: BUDGET_EXPENSES_UNLINK, useExisting: RecordPortsService },
+    { provide: ACCOUNT_RECORDS_CASCADE, useExisting: RecordPortsService },
   ],
-  exports: [BUDGET_EXPENSES_UNLINK],
-  controllers: [ExpenseController],
+  exports: [BUDGET_EXPENSES_UNLINK, ACCOUNT_RECORDS_CASCADE],
+  controllers: [ExpenseController, IncomeController],
 })
 export class RecordModule {}
