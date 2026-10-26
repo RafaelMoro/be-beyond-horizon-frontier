@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.13.0 (2026-10-26)
+
+### Pull Requests
+[#13](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/13) | feat: hardening-scripts — operator index script and data-repair report/fix
+
+
 ## v0.12.0 (2026-10-26)
 
 ### Pull Requests
