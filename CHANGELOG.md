@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.0 (2026-10-26)
+
+### Pull Requests
+[#9](https://github.com/RafaelMoro/be-beyond-horizon-frontier/pull/9) | feat: records-expenses — expense CRUD, monthly listing, balance and linked-budget effects
+
+
 ## v0.8.0 (2026-10-25)
 
 ### Pull Requests
